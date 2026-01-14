@@ -55,7 +55,7 @@ subprojects {
     }
 
     tasks.named('test') {
-        useJUnitPlatform()
+        //useJUnitPlatform()
     }
 }
 

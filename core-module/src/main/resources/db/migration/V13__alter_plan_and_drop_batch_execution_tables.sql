@@ -1,6 +1,6 @@
 -- =========================================================
--- Flyway Migration: V11_alter_plan_and_drop_batch_execution_tables.sql
--- 설명: 배치 실행 관리 및 이력 테이블 생성
+-- Flyway Migration: V13_alter_plan_and_drop_batch_execution_tables.sql
+-- 설명: plans 컬럼 수정 및 배치 관련 테이블 드랍
 -- 작성일: 2025-01-15
 -- =========================================================
 -- PLANS: 요금제 마스터

@@ -8,8 +8,6 @@ jar {
 }
 
 dependencies {
-    // Spring Data
-    implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
     
     // Database
     runtimeOnly 'com.mysql:mysql-connector-j'

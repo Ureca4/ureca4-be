@@ -6,11 +6,18 @@ import com.ureca.billing.notification.service.MessagePolicyService;
 import com.ureca.billing.notification.service.WaitingQueueService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalTime;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api/test")
@@ -21,6 +28,13 @@ public class TestController {
     private final MessagePolicyService policyService;
     private final WaitingQueueService queueService;
     private final EmailService emailService;
+    private final RedisTemplate<String, String> redisTemplate;  
+    
+    @Value("${spring.data.redis.host}")  
+    private String redisHost;
+    
+    @Value("${spring.data.redis.port}")  
+    private int redisPort;
     
     /**
      * 통합 테스트: 현재 실제 시간으로 발송
@@ -33,7 +47,6 @@ public class TestController {
         boolean isBlock = policyService.isBlockTime();
         
         if (isBlock) {
-            // 금지 시간 → 대기열 저장
             queueService.addToQueue(message);
             
             return ResponseEntity.ok(Map.of(
@@ -44,7 +57,6 @@ public class TestController {
             ));
         }
         
-        // 정상 시간 → 즉시 발송
         try {
             emailService.sendEmail(message);
             
@@ -71,16 +83,15 @@ public class TestController {
     @PostMapping("/send-with-time")
     public ResponseEntity<Map<String, Object>> testSendWithTime(
             @RequestBody BillingMessage message,
-            @RequestParam String simulatedTime) {  // "23:00" 형식
+            @RequestParam String simulatedTime) {
         
         LocalTime testTime = LocalTime.parse(simulatedTime);
         LocalTime actualTime = LocalTime.now();
         log.info("🧪 Test send with simulated time: {} (actual: {})", testTime, actualTime);
         
-        boolean isBlock = policyService.isBlockTime(testTime);  // 테스트 시간으로 체크
+        boolean isBlock = policyService.isBlockTime(testTime);
         
         if (isBlock) {
-            // 금지 시간 → 대기열 저장
             queueService.addToQueue(message);
             
             return ResponseEntity.ok(Map.of(
@@ -92,7 +103,6 @@ public class TestController {
             ));
         }
         
-        // 정상 시간 → 즉시 발송
         try {
             emailService.sendEmail(message);
             

@@ -67,7 +67,21 @@ public class WaitingQueueService {
         Long removed = redisTemplate.opsForZSet().remove(QUEUE_KEY, messageJson);
         log.debug("🗑️ Removed {} message(s) from queue", removed);
     }
-    
+    /**
+     * 대기열 크기 확인
+     */
+    public long getQueueSize() {
+        Long size = redisTemplate.opsForZSet().size(QUEUE_KEY);
+        return size != null ? size : 0;
+    }
+
+    /**
+     * 대기열 전체 삭제 (테스트용)
+     */
+    public void clearQueue() {
+        Boolean deleted = redisTemplate.delete(QUEUE_KEY);
+        log.info("🗑️ Waiting queue cleared. deleted={}", deleted);
+    }
     /**
      * 대기열 상태 조회
      */
@@ -92,12 +106,18 @@ public class WaitingQueueService {
     }
     
     /**
-     * 다음 발송 가능 시간 계산 (다음날 08:00)
+     * 다음 발송 가능 시간 계산
+     * 
+     * 테스트 모드: 즉시 발송 가능
+     * 운영 모드: 다음날 08:00
      */
     private LocalDateTime calculateReleaseTime() {
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime nextRelease = now.toLocalDate().plusDays(1).atTime(8, 0);
+        // ✅ 테스트용: 즉시 발송 가능하도록 과거 시간 설정
+        //return LocalDateTime.now().minusMinutes(1);
         
-        return nextRelease;
+        // 🚀 운영용: 다음날 08:00 (배포 시 주석 해제)
+         LocalDateTime now = LocalDateTime.now();
+         LocalDateTime nextRelease = now.toLocalDate().plusDays(1).atTime(8, 0);
+          return nextRelease;
     }
 }

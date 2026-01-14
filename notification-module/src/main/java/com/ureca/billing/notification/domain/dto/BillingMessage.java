@@ -9,6 +9,7 @@ import java.io.Serializable;
 @AllArgsConstructor
 @Builder
 @ToString
+
 public class BillingMessage implements Serializable {
     
     private Long billId;

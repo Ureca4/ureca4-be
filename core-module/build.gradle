@@ -36,4 +36,7 @@ dependencies {
     // Flyway
     api 'org.flywaydb:flyway-core'
     api 'org.flywaydb:flyway-mysql'
+
+    // Jpa
+    api 'org.springframework.boot:spring-boot-starter-data-jpa'
 }

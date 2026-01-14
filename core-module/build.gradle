@@ -1,4 +1,8 @@
 // 라이브러리 모듈 설정 (실행 불가능)
+plugins {
+    id 'java-library'
+}
+
 bootJar {
     enabled = false
 }
@@ -9,27 +13,27 @@ jar {
 
 dependencies {
     // Spring Data
-    implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
+    api 'org.springframework.boot:spring-boot-starter-data-jdbc'
     
     // Database
     runtimeOnly 'com.mysql:mysql-connector-j'
     
     // Redis
-    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    api 'org.springframework.boot:spring-boot-starter-data-redis'
     
     // Kafka
-    implementation 'org.springframework.kafka:spring-kafka'
+    api 'org.springframework.kafka:spring-kafka'
     
     // Redisson (분산 락)
-    implementation 'org.redisson:redisson-spring-boot-starter:3.25.2'
+    api 'org.redisson:redisson-spring-boot-starter:3.25.2'
     
     // Jasypt (암호화)
-    implementation 'com.github.ulisesbocchio:jasypt-spring-boot-starter:3.0.5'
+    api 'com.github.ulisesbocchio:jasypt-spring-boot-starter:3.0.5'
     
     // Validation
-    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    api 'org.springframework.boot:spring-boot-starter-validation'
     
     // Flyway
-    implementation 'org.flywaydb:flyway-core'
-    implementation 'org.flywaydb:flyway-mysql'
+    api 'org.flywaydb:flyway-core'
+    api 'org.flywaydb:flyway-mysql'
 }

@@ -2,6 +2,12 @@
 spring:
   config:
     import: optional:file:../.env[.properties]
+  batch:
+    job:
+      name: userDummyJob
+      enabled: true
+    jdbc:
+      initialize-schema: always
   
   profiles:
     active: local  # 기본값 로컬

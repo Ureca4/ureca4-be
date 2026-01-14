@@ -32,4 +32,12 @@ dependencies {
     // Flyway
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-mysql'
+    
+    // Spring Batch
+    implementation 'org.springframework.boot:spring-boot-starter-batch'
+    // Test
+    testImplementation 'org.springframework.batch:spring-batch-test'
+    
+    // DataFaker (더미 데이터 생성)
+    implementation 'net.datafaker:datafaker:2.0.2'
 }

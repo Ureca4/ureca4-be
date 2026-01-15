@@ -8,14 +8,14 @@ import org.springframework.batch.item.ItemProcessor;
 import org.springframework.stereotype.Component;
 
 import com.ureca.billing.core.entity.UserPlanStatus;
-import com.ureca.billing.core.entity.UsersPlans;
+import com.ureca.billing.core.entity.UserPlans;
 import com.ureca.billing.core.entity.Users;
 
 import java.util.concurrent.ThreadLocalRandom;
 
 @Component
 public class UserPlanDummyProcessor
-        implements ItemProcessor<Users, UsersPlans> {
+        implements ItemProcessor<Users, UserPlans> {
 
     private final List<Long> planIds;
 
@@ -27,14 +27,14 @@ public class UserPlanDummyProcessor
     }
 
     @Override
-    public UsersPlans process(Users user) {
+    public UserPlans process(Users user) {
 
         Long planId = randomPlan();
 
         LocalDate startDate = user.getCreatedAt()
             .toLocalDate();
 
-        return new UsersPlans(
+        return new UserPlans(
             user.getUserId(),
             planId,
             startDate,

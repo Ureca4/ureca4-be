@@ -1,6 +1,6 @@
 spring:
   config:
-    import: optional:file:../.env.local[.properties]  # 상위 폴더 참조
+    import: optional:file:.env.local[.properties]  # 상위 폴더 참조
 
   datasource:
     url: ${DB_URL}

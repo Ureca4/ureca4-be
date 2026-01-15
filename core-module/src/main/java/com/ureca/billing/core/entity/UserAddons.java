@@ -3,32 +3,32 @@ package com.ureca.billing.core.entity;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-public class UsersPlans {
-    private Long userPlanId;
+public class UserAddons {
+    private Long userAddonId;
     private Long userId;
-    private Long planId;
+    private Long addonId;
     private LocalDate startDate;
     private LocalDate endDate;
-    private UserPlanStatus status;
+    private AddonStatus status;
     private LocalDateTime createdAt;
 
-    public UsersPlans(Long userId, Long planId, LocalDate startDate,
-                     LocalDate endDate, UserPlanStatus status) {
+    public UserAddons(Long userId, Long addonId, LocalDate startDate,
+                      LocalDate endDate, AddonStatus status) {
         this.userId = userId;
-        this.planId = planId;
+        this.addonId = addonId;
         this.startDate = startDate;
         this.endDate = endDate;
         this.status = status;
     }
 
     // Getter / Setter
-    public Long getUserPlanId() { return userPlanId; }
-    public void setUserPlanId(Long userPlanId) { this.userPlanId = userPlanId; }
+    public Long getUserAddonId() { return userAddonId; }
+    public void setUserAddonId(Long userAddonId) { this.userAddonId = userAddonId; }
     public Long getUserId() { return userId; }
-    public Long getPlanId() { return planId; }
+    public Long getAddonId() { return addonId; }
     public LocalDate getStartDate() { return startDate; }
     public LocalDate getEndDate() { return endDate; }
-    public UserPlanStatus getStatus() { return status; }
+    public AddonStatus getStatus() { return status; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

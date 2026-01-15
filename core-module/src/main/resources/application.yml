@@ -4,7 +4,7 @@ spring:
     import: optional:file:.env[.properties]
   batch:
     job:
-      name: userDummyJob
+      name: dummyDataJob
       enabled: true
     jdbc:
       initialize-schema: always

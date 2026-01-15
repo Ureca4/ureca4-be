@@ -1,0 +1,114 @@
+package com.ureca.billing.core.config;
+
+import java.sql.Date;
+
+import javax.sql.DataSource;
+
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemReader;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.JdbcBatchItemWriter;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+
+import com.ureca.billing.core.entity.Users;
+import com.ureca.billing.core.entity.UserPlans;
+import com.ureca.billing.core.util.UserDummyProcessor;
+import com.ureca.billing.core.util.UserPlanDummyProcessor;
+
+import lombok.RequiredArgsConstructor;
+
+@Configuration
+@RequiredArgsConstructor
+public class DummyDataJobConfig {
+
+    private final JobRepository jobRepository;
+    private final PlatformTransactionManager transactionManager;
+    private final DataSource dataSource;
+
+    /**
+     * 범용 Step 생성 메서드
+     */
+    private <I, O> Step createStep(String stepName,
+                                   ItemReader<I> reader,
+                                   ItemProcessor<I, O> processor,
+                                   ItemWriter<O> writer,
+                                   int chunkSize) {
+        return new StepBuilder(stepName, jobRepository)
+                .<I, O>chunk(chunkSize, transactionManager)
+                .reader(reader)
+                .processor(processor)
+                .writer(writer)
+                .build();
+    }
+
+    /**
+     * Users 더미 Step
+     */
+    @Bean
+    public Step usersDummyStep(UserDummyProcessor processor, ItemReader<Long> userReader) {
+        JdbcBatchItemWriter<Users> writer = new JdbcBatchItemWriter<>();
+        writer.setDataSource(dataSource);
+        writer.setSql("""
+            INSERT INTO USERS (email_cipher, email_hash, phone_cipher, phone_hash, name, birth_date, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """);
+        writer.setItemPreparedStatementSetter((user, ps) -> {
+            ps.setString(1, user.getEmailCipher());
+            ps.setString(2, user.getEmailHash());
+            ps.setString(3, user.getPhoneCipher());
+            ps.setString(4, user.getPhoneHash());
+            ps.setString(5, user.getName());
+            ps.setDate(6, Date.valueOf(user.getBirthDate()));
+            ps.setString(7, user.getStatus().name());
+        });
+        writer.afterPropertiesSet();
+
+        return createStep("usersDummyStep", userReader, processor, writer, 1000);
+    }
+
+    /**
+     * UsersPlans 더미 Step
+     */
+    @Bean
+    public Step usersPlansDummyStep(UserPlanDummyProcessor processor, ItemReader<Users> reader) {
+        JdbcBatchItemWriter<UserPlans> writer = new JdbcBatchItemWriter<>();
+        writer.setDataSource(dataSource);
+        writer.setSql("""
+            INSERT INTO USER_PLANS (user_id, plan_id, start_date, end_date, status)
+            VALUES (?, ?, ?, ?, ?)
+        """);
+        writer.setItemPreparedStatementSetter((plan, ps) -> {
+            ps.setLong(1, plan.getUserId());
+            ps.setLong(2, plan.getPlanId());
+            ps.setDate(3, Date.valueOf(plan.getStartDate()));
+            ps.setDate(4, plan.getEndDate() != null ? Date.valueOf(plan.getEndDate()) : null);
+            ps.setString(5, plan.getStatus().name());
+        });
+        writer.afterPropertiesSet();
+
+        return createStep("usersPlansDummyStep", reader, processor, writer, 1000);
+    }
+
+    /**
+     * 전체 더미 Job
+     * 필요하면 Step 순서 추가만 하면 됨
+     */
+    @Bean
+    public Job dummyDataJob(
+    		@Qualifier("usersDummyStep")Step usersDummyStep,
+    		@Qualifier("usersPlansDummyStep") Step usersPlansDummyStep
+    		) {
+        return new JobBuilder("dummyDataJob", jobRepository)
+                .start(usersDummyStep)
+                .next(usersPlansDummyStep)
+                .build();
+    }
+}

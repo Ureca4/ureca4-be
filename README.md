@@ -14,12 +14,15 @@
 project-root
  ┣ settings.gradle
  ┣ build.gradle
- ┣ .env.example
+ ┣ .env.local
+ ┣ .env.prod
  ┣ core-module
  ┃ ┗ build.gradle
  ┣ admin-module
  ┃ ┗ build.gradle
- ┗ api-module
+ ┣ batch-module
+ ┃ ┗ build.gradle
+ ┣ notification-module
    ┗ build.gradle
 ```
 
@@ -28,9 +31,9 @@ project-root
 | 모듈           | 역할            |
 | ------------ | ------------- |
 | core-module  | 공통 도메인, 공통 설정 |
-| api-module   | Public API 서버 |
 | admin-module | 관리자 서버        |
-
+| batch-module | 요금 정산 서버 |
+| notification-module | 명세서 발송 서버 |
 ---
 
 ## 🧩 3. 멀티 모듈 설정
@@ -44,7 +47,8 @@ rootProject.name = "billing-system"
 
 include("core-module")
 include("admin-module")
-include("api-module")
+include("batch-module")
+include("notification-module")
 ```
 
 ---

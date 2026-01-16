@@ -1,6 +1,7 @@
 package com.ureca.billing.core.config;
 
 import java.sql.Date;
+import java.sql.Timestamp;
 
 import javax.sql.DataSource;
 
@@ -19,6 +20,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import com.ureca.billing.core.entity.MicroPayments;
 import com.ureca.billing.core.entity.UserAddons;
 import com.ureca.billing.core.entity.UserPlans;
 import com.ureca.billing.core.entity.Users;
@@ -63,7 +65,12 @@ public class DummyDataJobConfig {
     public ItemReader<Long> userAddonsReader() {
         return new SequenceItemReader(20_000);
     }
-
+    
+    @Bean
+    @StepScope
+    public ItemReader<Long> microPaymentsUserReader() {
+        return new SequenceItemReader(20_000);
+    }
 
     /**
      * Users 더미 Step
@@ -150,6 +157,39 @@ public class DummyDataJobConfig {
             .writer(writer)
             .build();
     }
+    /**
+     * MicroPayments 더미 Step
+     */
+    @Bean
+    public Step microPaymentsDummyStep(
+    		@Qualifier("microPaymentsUserReader") ItemReader<Long> reader,
+            ItemProcessor<Long, MicroPayments> processor,
+            PlatformTransactionManager transactionManager
+    ) {
+    	JdbcBatchItemWriter<MicroPayments> writer = new JdbcBatchItemWriter<>();
+        writer.setDataSource(dataSource);
+        writer.setSql("""
+            INSERT INTO MICRO_PAYMENTS
+            (user_id, amount, merchant_name, payment_type, payment_date)
+            VALUES (?, ?, ?, ?, ?)
+        """);
+        writer.setItemPreparedStatementSetter((payment, ps) -> {
+            ps.setLong(1, payment.getUserId());
+            ps.setInt(2, payment.getAmount());
+            ps.setString(3, payment.getMerchantName());
+            ps.setString(4, payment.getPaymentType().name());
+            ps.setTimestamp(5, Timestamp.valueOf(payment.getPaymentDate()));
+        });
+        writer.afterPropertiesSet();
+    	
+        return new StepBuilder("microPaymentsDummyStep", jobRepository)
+                .<Long, MicroPayments>chunk(1000, transactionManager)
+                .reader(reader)
+                .processor(processor)
+                .writer(writer)
+                .build();
+    }
+
 
 
     /**
@@ -160,12 +200,14 @@ public class DummyDataJobConfig {
     public Job dummyDataJob(
     		@Qualifier("usersDummyStep")Step usersDummyStep,
     		@Qualifier("userPlansDummyStep") Step userPlansDummyStep,
-    		@Qualifier("userAddonsDummyStep") Step userAddonsDummyStep
+    		@Qualifier("userAddonsDummyStep") Step userAddonsDummyStep,
+    		@Qualifier("microPaymentsDummyStep") Step microPaymentsDummyStep
     		) {
         return new JobBuilder("dummyDataJob", jobRepository)
                 .start(usersDummyStep)
                 .next(userPlansDummyStep)
                 .next(userAddonsDummyStep)
+                .next(microPaymentsDummyStep)
                 .build();
     }
 }

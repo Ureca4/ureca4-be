@@ -37,10 +37,27 @@ public class DummyDataJobConfig {
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
     private final DataSource dataSource;
-
-    /**
-     * 범용 Step 생성 메서드
-     */
+    
+    //Users 더미데이터 개수
+    @Bean
+    @StepScope
+    public ItemReader<Long> usersReader() {
+        return new SequenceItemReader(10_000);
+    }
+    //userAddons 더미데이터 개수
+    @Bean
+    @StepScope
+    public ItemReader<Long> userAddonsReader() {
+        return new SequenceItemReader(20_000);
+    }
+    //microPayments 더미데이터 개수
+    @Bean
+    @StepScope
+    public ItemReader<Long> microPaymentsUserReader() {
+        return new SequenceItemReader(20_000);
+    }
+    
+    //범용 Step 생성 메서드
     private <I, O> Step createStep(String stepName,
                                    ItemReader<I> reader,
                                    ItemProcessor<I, O> processor,
@@ -53,28 +70,8 @@ public class DummyDataJobConfig {
                 .writer(writer)
                 .build();
     }
-    
-    @Bean
-    @StepScope
-    public ItemReader<Long> usersReader() {
-        return new SequenceItemReader(10_000);
-    }
 
-    @Bean
-    @StepScope
-    public ItemReader<Long> userAddonsReader() {
-        return new SequenceItemReader(20_000);
-    }
-    
-    @Bean
-    @StepScope
-    public ItemReader<Long> microPaymentsUserReader() {
-        return new SequenceItemReader(20_000);
-    }
-
-    /**
-     * Users 더미 Step
-     */
+    //Users 더미 Step
     @Bean
     public Step usersDummyStep(UserDummyProcessor processor, @Qualifier("usersReader") ItemReader<Long> reader) {
         JdbcBatchItemWriter<Users> writer = new JdbcBatchItemWriter<>();
@@ -97,9 +94,7 @@ public class DummyDataJobConfig {
         return createStep("usersDummyStep", reader, processor, writer, 1000);
     }
 
-    /**
-     * UserPlans 더미 Step
-     */
+    //UserPlans 더미 Step
     @Bean
     public Step userPlansDummyStep(UserPlanDummyProcessor processor, ItemReader<Users> reader) {
         JdbcBatchItemWriter<UserPlans> writer = new JdbcBatchItemWriter<>();
@@ -119,9 +114,7 @@ public class DummyDataJobConfig {
 
         return createStep("userPlansDummyStep", reader, processor, writer, 1000);
     }
-    /**
-     * UserAddons 더미 Step
-     */
+    //UserAddons 더미 Step
     @Bean
     public Step userAddonsDummyStep(
             ItemProcessor<Long, UserAddons> processor,
@@ -157,9 +150,7 @@ public class DummyDataJobConfig {
             .writer(writer)
             .build();
     }
-    /**
-     * MicroPayments 더미 Step
-     */
+    //MicroPayments 더미 Step
     @Bean
     public Step microPaymentsDummyStep(
     		@Qualifier("microPaymentsUserReader") ItemReader<Long> reader,
@@ -189,8 +180,6 @@ public class DummyDataJobConfig {
                 .writer(writer)
                 .build();
     }
-
-
 
     /**
      * 전체 더미 Job

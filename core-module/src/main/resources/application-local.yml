@@ -1,6 +1,6 @@
 spring:
   config:
-    import: optional:file:../.env.local[.properties]  # 상위 폴더 참조
+    import: optional:file:.env.local[.properties]  # 상위 폴더 참조
 
   datasource:
     url: ${DB_URL}
@@ -20,3 +20,6 @@ spring:
 
   kafka:
     bootstrap-servers: ${KAFKA_SERVERS}
+  crypto:
+    aes:
+      key: ${AES_SECRET_KEY}

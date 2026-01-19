@@ -1,10 +1,10 @@
 # 공통 데이터베이스 설정
 spring:
   config:
-    import: optional:file:../.env[.properties]
+    import: optional:file:.env[.properties]
   batch:
     job:
-      name: userDummyJob
+      name: dummyDataJob
       enabled: true
     jdbc:
       initialize-schema: always
@@ -18,12 +18,14 @@ spring:
     baseline-on-migrate: true
     locations: classpath:db/migration
 
-# Jasypt 암호화
+# Jasypt 암호화 (설정 정보)
+# 추후에 보강
 jasypt:
   encryptor:
     password: ${JASYPT_PASSWORD}
-    algorithm: PBEWithMD5AndDES
-    iv-generator-classname: org.jasypt.iv.NoIvGenerator
+    algorithm: PBEWithHMACSHA512AndAES_256
+    key-obtention-iterations: 1000
+    pool-size: 1
 
 # 로깅
 logging:
@@ -32,3 +34,10 @@ logging:
     com.ureca.billing: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# AES 암호화(개인 정보 보호)
+crypto:
+  aes:
+    key: ${AES_SECRET_KEY}
+  hash:
+    key: ${HASH_SECRET_KEY}

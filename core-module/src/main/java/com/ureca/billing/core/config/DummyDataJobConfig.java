@@ -77,9 +77,10 @@ public class DummyDataJobConfig {
         JdbcBatchItemWriter<Users> writer = new JdbcBatchItemWriter<>();
         writer.setDataSource(dataSource);
         writer.setSql("""
-            INSERT INTO USERS (email_cipher, email_hash, phone_cipher, phone_hash, name, birth_date, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """);
+        INSERT INTO USERS (email_cipher, email_hash, phone_cipher, phone_hash, name, birth_date, status, notification_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """);
+
         writer.setItemPreparedStatementSetter((user, ps) -> {
             ps.setString(1, user.getEmailCipher());
             ps.setString(2, user.getEmailHash());
@@ -88,6 +89,9 @@ public class DummyDataJobConfig {
             ps.setString(5, user.getName());
             ps.setDate(6, Date.valueOf(user.getBirthDate()));
             ps.setString(7, user.getStatus().name());
+
+            // 2. 8번째 파라미터로 notificationType의 name(EMAIL, SMS, PUSH)을 넣어줍니다.
+            ps.setString(8, user.getNotificationType().name());
         });
         writer.afterPropertiesSet();
 

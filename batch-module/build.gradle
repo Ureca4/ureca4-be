@@ -10,4 +10,6 @@ dependencies {
     
     // Test
     testImplementation 'org.springframework.batch:spring-batch-test'
+
+    implementation 'org.springframework.kafka:spring-kafka'
 }

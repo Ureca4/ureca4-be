@@ -4,22 +4,23 @@ import java.util.List;
 
 import com.ureca.billing.core.entity.Bill;
 import com.ureca.billing.core.entity.BillDetail;
+import lombok.Builder;
+import lombok.Getter;
 
+@Getter
+@Builder
 public class BillingResult {
 
-    private Bill bill;
-    private List<BillDetail> billDetail;
+    private final Bill bill;
+    private final List<BillDetail> billDetail;
 
-    public BillingResult(Bill bill, List<BillDetail> billDetail) {
-        this.bill = bill;
-        this.billDetail = billDetail;
-    }
+    // 메타 데이터
+    private final String planName;
+    private final String emailCipher;
+    private final String phoneCipher;
 
-    public Bill getBill() {
-        return bill;
-    }
-
-    public List<BillDetail> getBillDetail() {
-        return billDetail;
-    }
+    // 금액 정보 (Long)
+    private final long planFee;
+    private final long addonFee;
+    private final long microPaymentFee;
 }

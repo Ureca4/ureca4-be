@@ -1,13 +1,17 @@
 package com.ureca.billing.batch.config;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 import javax.sql.DataSource;
 
+import com.ureca.billing.core.dto.BillingMessageDto;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.launch.support.RunIdIncrementer;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.item.ItemProcessor;
@@ -21,6 +25,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import com.ureca.billing.batch.util.BillingResult;
@@ -61,44 +66,58 @@ public class MonthlyBillingJobConfig {
     /* =========================
      * Writer
      * ========================= */
+    // [KafkaTemplate 주입]
+    private final KafkaTemplate<String, Object> kafkaTemplate;
+
     @Bean
     public ItemWriter<BillingResult> monthlyBillingWriter() {
         return items -> {
+            System.out.println(">>>> [Writer] 처리할 아이템 개수: " + items.size());
             JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+            DateTimeFormatter ymdFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
             for (BillingResult result : items) {
-
                 // 1. BILLS 저장
                 jdbcTemplate.update(
-                    """
-                    INSERT INTO BILLS
-                    (user_id, billing_month, settlement_date, bill_issue_date)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    result.getBill().getUserId(),
-                    result.getBill().getBillingMonth(),
-                    result.getBill().getSettlementDate(),
-                    result.getBill().getBillIssueDate()
+                        "INSERT INTO BILLS (user_id, billing_month, settlement_date, bill_issue_date) VALUES (?, ?, ?, ?)",
+                        result.getBill().getUserId(),
+                        result.getBill().getBillingMonth(),
+                        result.getBill().getSettlementDate(),
+                        result.getBill().getBillIssueDate()
                 );
-
-                Long billId =
-                    jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+                Long billId = jdbcTemplate.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
 
                 // 2. BILL_DETAILS 저장
                 for (BillDetail detail : result.getBillDetail()) {
                     jdbcTemplate.update(
-                        """
-                        INSERT INTO BILL_DETAILS
-                        (bill_id, detail_type, charge_category, related_user_id, amount)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        billId,
-                        detail.getDetailType(),
-                        detail.getChargeCategory().name(),
-                        detail.getRelatedUserId(),
-                        detail.getAmount()
+                            "INSERT INTO BILL_DETAILS (bill_id, detail_type, charge_category, related_user_id, amount) VALUES (?, ?, ?, ?, ?)",
+                            billId, detail.getDetailType(), detail.getChargeCategory().name(), detail.getRelatedUserId(), detail.getAmount()
                     );
                 }
+
+                // 3. Kafka 전송 (Lombok Builder 사용)
+                long totalAmount = result.getPlanFee() + result.getAddonFee() + result.getMicroPaymentFee();
+
+                BillingMessageDto message = BillingMessageDto.builder()
+                        .billId(billId)
+                        .userId(result.getBill().getUserId())
+                        .billYearMonth(result.getBill().getBillingMonth().replace("-", ""))
+                        .billDate(result.getBill().getBillIssueDate().format(ymdFormatter))
+                        .dueDate(result.getBill().getBillIssueDate().plusDays(15).format(ymdFormatter))
+                        .timestamp(LocalDateTime.now().toString())
+
+                        .recipientEmail(result.getEmailCipher())
+                        .recipientPhone(result.getPhoneCipher())
+
+                        .totalAmount(totalAmount)
+                        .planFee(result.getPlanFee())
+                        .addonFee(result.getAddonFee())
+                        .microPaymentFee(result.getMicroPaymentFee())
+                        .planName(result.getPlanName())
+                        .build();
+
+                System.out.println(">>>> [Kafka] 전송 데이터: " + result.getBill().getUserId());
+                kafkaTemplate.send("billing-notification-topic", message);
             }
         };
     }
@@ -124,8 +143,9 @@ public class MonthlyBillingJobConfig {
      * Job
      * ========================= */
     @Bean
-    public Job monthlyBillingJob(@Qualifier("monthlyBillingStep") Step monthlyBillingStep) {
+    public Job monthlyBillingJob(JobRepository jobRepository, Step monthlyBillingStep) {
         return new JobBuilder("monthlyBillingJob", jobRepository)
+                .incrementer(new RunIdIncrementer()) // [추가] 실행할 때마다 고유 ID를 생성해줌
                 .start(monthlyBillingStep)
                 .build();
     }

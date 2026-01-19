@@ -19,4 +19,27 @@ public class BillDetail {
     private ChargeCategory chargeCategory;
     private LocalDateTime createdAt;
     private Long relatedUserId;     // 가족 결합 등 참조용 ID
+    private Long amount;
+    
+	public void setId(Long id) {
+		this.id = id;
+	}
+	public void setBillId(Long billId) {
+		this.billId = billId;
+	}
+	public void setDetailType(String detailType) {
+		this.detailType = detailType;
+	}
+	public void setChargeCategory(ChargeCategory chargeCategory) {
+		this.chargeCategory = chargeCategory;
+	}
+	public void setCreatedAt(LocalDateTime createdAt) {
+		this.createdAt = createdAt;
+	}
+	public void setRelatedUserId(Long relatedUserId) {
+		this.relatedUserId = relatedUserId;
+	}
+	public void setAmount(Long amount) {
+		this.amount = amount;
+	}
 }

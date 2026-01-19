@@ -19,4 +19,24 @@ public class Bill {
     private LocalDateTime createdAt;
     private LocalDate settlementDate;
     private LocalDate billIssueDate;
+    private String billingMonth;
+    
+	public void setId(Long id) {
+		this.id = id;
+	}
+	public void setUserId(Long userId) {
+		this.userId = userId;
+	}
+	public void setCreatedAt(LocalDateTime createdAt) {
+		this.createdAt = createdAt;
+	}
+	public void setSettlementDate(LocalDate settlementDate) {
+		this.settlementDate = settlementDate;
+	}
+	public void setBillIssueDate(LocalDate billIssueDate) {
+		this.billIssueDate = billIssueDate;
+	}
+	public void setBillingMonth(String billingMonth) {
+		this.billingMonth = billingMonth;
+	}
 }

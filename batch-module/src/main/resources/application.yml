@@ -20,3 +20,16 @@ spring:
 
   kafka:
     bootstrap-servers: ${KAFKA_SERVERS}
+
+  batch:
+    job:
+      name: monthlyBillingJob
+      enabled: true
+    jdbc:
+      initialize-schema: always
+
+  crypto:
+    aes:
+      key: ${AES_SECRET_KEY}
+    hash:
+      key: ${HASH_SECRET_KEY}

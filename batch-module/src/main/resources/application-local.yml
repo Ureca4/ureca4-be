@@ -1,3 +1,8 @@
 spring:
   config:
     import: optional:file:../.env.local[.properties]  # 상위 폴더 참조
+crypto:
+  aes:
+    key: ${AES_SECRET_KEY}
+  hash:
+    key: ${HASH_SECRET_KEY}

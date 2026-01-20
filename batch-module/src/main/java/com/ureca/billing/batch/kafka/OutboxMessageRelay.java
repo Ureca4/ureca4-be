@@ -1,7 +1,8 @@
-package com.ureca.billing.batch.job;
+package com.ureca.billing.batch.kafka;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -21,7 +22,8 @@ public class OutboxMessageRelay {
     private final KafkaTemplate<String, String> kafkaTemplate;
 
     // application.yml의 토픽명 확인
-    private final String TOPIC_NAME = "billing-notification-topic";
+    @Value("${app.kafka.topics.billing-notification}")
+    private String topicName;
 
     // 0.1초마다 100개씩 '고속' 처리
     @Scheduled(fixedDelay = 100)
@@ -36,7 +38,7 @@ public class OutboxMessageRelay {
 
         // 2. 카프카로 병렬 전송 (비동기)
         List<CompletableFuture<SendResult<String, String>>> futures = events.stream()
-                .map(event -> kafkaTemplate.send(TOPIC_NAME, event.eventId(), event.payload()))
+                .map(event -> kafkaTemplate.send(topicName, event.eventId(), event.payload()))
                 .toList();
 
         // 3. 모든 전송이 끝날 때까지 대기 (Kafka가 빠르니 금방 끝남)

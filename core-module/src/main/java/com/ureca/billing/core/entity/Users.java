@@ -24,9 +24,6 @@ public class Users {
     private LocalDate birthDate;
     private UserStatus status;
 
-    // [추가된 필드]
-    private NotificationType notificationType;
-
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

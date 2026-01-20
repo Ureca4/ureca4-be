@@ -4,26 +4,23 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ureca.billing.core.dto.BillingMessageDto;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.messaging.Message;
-import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import lombok.RequiredArgsConstructor;
+import static org.apache.kafka.common.requests.FetchMetadata.log;
 
 @Service
 @RequiredArgsConstructor
@@ -31,11 +28,9 @@ public class MonthlyBillingService {
 
     private final NamedParameterJdbcTemplate namedJdbc;
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
-    private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    @Value("${app.kafka.topics.billing-notification}")
-    private String billingTopic;
 
     @Transactional
     public void process(List<Long> userIds, YearMonth billingMonth) {
@@ -44,6 +39,7 @@ public class MonthlyBillingService {
 
         LocalDate monthStart = billingMonth.atDay(1);
         LocalDate nextMonthStart = billingMonth.plusMonths(1).atDay(1);
+
         DateTimeFormatter ymdFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
         Map<String, Object> params = Map.of(
@@ -55,14 +51,13 @@ public class MonthlyBillingService {
 
         Map<Long, UserContactInfo> userContacts = new HashMap<>();
         namedJdbc.query("""
-            SELECT user_id, email_cipher, phone_cipher, notification_type, name
+            SELECT user_id, email_cipher, phone_cipher, name
             FROM USERS
             WHERE user_id IN (:userIds)
         """, params, (RowCallbackHandler) rs -> {
             userContacts.put(rs.getLong("user_id"), UserContactInfo.builder()
                     .emailCipher(rs.getString("email_cipher"))
                     .phoneCipher(rs.getString("phone_cipher"))
-                    .notificationType(rs.getString("notification_type"))
                     .name(rs.getString("name"))
                     .build());
         });
@@ -160,11 +155,6 @@ public class MonthlyBillingService {
             Long billId = billIdByUser.get(uid);
             if (billId == null) continue;
 
-            // 요금 계산 변수
-            long currentPlanFee = 0;
-            long currentAddonFee = 0;
-            long currentMicroFee = 0;
-
             // PLAN
             Long planFee = planFees.get(uid);
             if (planFee != null) {
@@ -198,31 +188,6 @@ public class MonthlyBillingService {
                     uid
                 });
             }
-
-            UserContactInfo contact = userContacts.get(uid);
-            if (contact != null) {
-                long totalAmount = currentPlanFee + currentAddonFee + currentMicroFee;
-
-                BillingMessageDto messageDto = BillingMessageDto.builder()
-                        .billId(billId)
-                        .userId(uid)
-                        .billYearMonth(billingMonth.toString().replace("-", ""))
-                        .billDate(LocalDate.now().format(ymdFormatter))
-                        .dueDate(LocalDate.now().plusDays(15).format(ymdFormatter))
-                        .timestamp(LocalDateTime.now().toString())
-                        .recipientEmail(contact.getEmailCipher())
-                        .recipientPhone(contact.getPhoneCipher())
-                        .name(contact.getName())
-                        .notificationType(contact.getNotificationType())
-                        .totalAmount(totalAmount)
-                        .planFee(currentPlanFee)
-                        .addonFee(currentAddonFee)
-                        .microPaymentFee(currentMicroFee)
-                        .planName(planNames.getOrDefault(uid, "기본 요금제"))
-                        .build();
-
-                kafkaTemplate.send(billingTopic, messageDto);
-            }
         }
 
         jdbcTemplate.batchUpdate("""
@@ -230,14 +195,103 @@ public class MonthlyBillingService {
             (bill_id, detail_type, charge_category, amount, related_user_id)
             VALUES (?, ?, ?, ?, ?)
         """, rows);
-    }
 
+        /* =========================
+         * 5️⃣ OUTBOX_EVENTS 생성 (Transactional Outbox)
+         *     - user별 enabled 채널 모두 생성
+         *     - OUTBOX는 READY로만 쌓고 끝(Producer가 가져감)
+         * ========================= */
+
+        // 5-1) prefs 조회: (EMAIL/SMS만) enabled=1
+        Map<Long, List<String>> channelsByUser = new HashMap<>();
+        namedJdbc.query("""
+            SELECT user_id, channel
+            FROM USER_NOTIFICATION_PREFS
+            WHERE enabled = 1
+              AND user_id IN (:userIds)
+              AND channel IN ('EMAIL','SMS')   -- OUTBOX enum이 EMAIL/SMS만이라 일단 제한
+        """, Map.of("userIds", userIds), (RowCallbackHandler) rs -> {
+            long uid = rs.getLong("user_id");
+            String channel = rs.getString("channel");
+            channelsByUser.computeIfAbsent(uid, k -> new ArrayList<>()).add(channel);
+        });
+
+        // 5-2) outbox row 생성
+        List<Object[]> outboxRows = new ArrayList<>();
+        String eventType = "BILLING_NOTIFY";
+
+        for (Long uid : userIds) {
+            Long billId = billIdByUser.get(uid);
+            if (billId == null) continue;
+
+            List<String> channels = channelsByUser.getOrDefault(uid, List.of());
+            if (channels.isEmpty()) continue;
+
+            UserContactInfo contact = userContacts.get(uid);
+            if (contact == null) continue;
+
+            // 요금 합계 계산 (DTO 생성을 위해 다시 계산)
+            long planFee = planFees.getOrDefault(uid, 0L);
+            long addonTotal = addonFees.getOrDefault(uid, List.of()).stream().mapToLong(Long::longValue).sum();
+            long microTotal = microPayments.getOrDefault(uid, List.of()).stream().mapToLong(Long::longValue).sum();
+            long totalAmount = planFee + addonTotal + microTotal;
+
+            for (String ch : channels) {
+                String eventId = UUID.randomUUID().toString();
+
+                try {
+                    // 1. DTO 생성 (모든 정보 포함)
+                    BillingMessageDto messageDto = BillingMessageDto.builder()
+                            .billId(billId)
+                            .userId(uid)
+                            .billYearMonth(billingMonth.toString().replace("-", ""))
+                            .billDate(LocalDate.now().format(ymdFormatter))
+                            .dueDate(LocalDate.now().plusDays(15).format(ymdFormatter))
+                            .timestamp(LocalDateTime.now().toString())
+                            .recipientEmail(contact.getEmailCipher())
+                            .recipientPhone(contact.getPhoneCipher())
+                            .name(contact.getName())
+                            .totalAmount(totalAmount)
+                            .planName(planNames.getOrDefault(uid, "기본 요금제"))
+                            .build();
+
+                    // 2. JSON 변환 (Fat Payload)
+                    String payload = objectMapper.writeValueAsString(messageDto);
+
+                    outboxRows.add(new Object[]{
+                            eventId,
+                            billId,
+                            uid,
+                            eventType,
+                            ch,          // OUTBOX_EVENTS.notification_type
+                            payload      // Full JSON Data
+                    });
+
+                } catch (JsonProcessingException e) {
+                    log.error("JSON 변환 실패: userId={}", uid, e);
+                }
+            }
+        }
+
+        // 5-3) DB 저장 (Batch Insert)
+        jdbcTemplate.batchUpdate("""
+            INSERT INTO OUTBOX_EVENTS
+              (event_id, bill_id, user_id, event_type, notification_type, payload, status, attempt_count, next_retry_at, last_error)
+            VALUES
+              (?, ?, ?, ?, ?, CAST(? AS JSON), 'READY', 0, NULL, NULL)
+            ON DUPLICATE KEY UPDATE
+              payload = VALUES(payload),
+              status = 'READY',
+              next_retry_at = NULL,
+              last_error = NULL,
+              updated_at = CURRENT_TIMESTAMP
+        """, outboxRows);
+    }
     @Getter
     @Builder
     private static class UserContactInfo {
         private String emailCipher;
         private String phoneCipher;
-        private String notificationType;
         private String name;
     }
 }

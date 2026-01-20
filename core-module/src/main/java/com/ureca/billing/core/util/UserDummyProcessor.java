@@ -72,7 +72,6 @@ public class UserDummyProcessor implements ItemProcessor<Long, Users> {
         UserStatus status = UserStatus.ACTIVE;
 
         NotificationType[] types = NotificationType.values();
-        NotificationType randomType = types[faker.random().nextInt(types.length)];
 
         return Users.builder()
                 .emailCipher(emailCipher)
@@ -82,7 +81,6 @@ public class UserDummyProcessor implements ItemProcessor<Long, Users> {
                 .name(name)
                 .birthDate(birthDate)
                 .status(status)
-                .notificationType(randomType)
                 .build();
     }
 

@@ -23,6 +23,8 @@ public class BillingMessageDto implements Serializable {
     // 수신자 정보
     private String recipientEmail;
     private String recipientPhone;
+    private String notificationType;
+    private String name;
 
     // 금액 정보 (Integer -> Long 변경 추천)
     private Long totalAmount;

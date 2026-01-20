@@ -48,3 +48,8 @@ spring:
       key: ${AES_SECRET_KEY}
     hash:
       key: ${HASH_SECRET_KEY}
+
+app:
+  kafka:
+    topics:
+      billing-notification: billing-notification-topic

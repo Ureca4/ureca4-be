@@ -37,8 +37,8 @@ public class EmailNotificationHandler implements NotificationHandler {
     public void handle(BillingMessageDto message, String traceId) {
         log.info("{} 📧 EMAIL 핸들러 처리 시작 - billId={}", traceId, message.getBillId());
         
-        // 1. 중복 체크
-        if (duplicateCheckHandler.isDuplicate(message.getBillId())) {
+        // 1. 중복 체크 (타입 포함)
+        if (duplicateCheckHandler.isDuplicate(message.getBillId(), "EMAIL")) {
             log.warn("{} ⚠️ 중복 메시지 스킵 - billId={}", traceId, message.getBillId());
             saveNotification(message, "FAILED", "Duplicate message", traceId);
             return;
@@ -63,6 +63,7 @@ public class EmailNotificationHandler implements NotificationHandler {
         sendEmail(message, traceId);
     }
     
+    
     @Override
     public String getType() {
         return "EMAIL";
@@ -74,7 +75,7 @@ public class EmailNotificationHandler implements NotificationHandler {
             emailService.sendEmail(message);
             
             // 발송 완료 마킹
-            duplicateCheckHandler.markAsSent(message.getBillId());
+            duplicateCheckHandler.markAsSent(message.getBillId(), "EMAIL");
             
             // DB 저장
             saveNotification(message, "SENT", null, traceId);

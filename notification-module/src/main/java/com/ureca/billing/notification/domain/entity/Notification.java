@@ -21,6 +21,9 @@ public class Notification {
     @Column("user_id")
     private Long userId;
     
+    @Column("bill_id")
+    private Long billId;
+    
     @Column("notification_type")
     private String notificationType;  // "EMAIL" or "SMS"
     
@@ -65,6 +68,7 @@ public class Notification {
             .notificationStatus("RETRY")  // 상태를 RETRY로 변경
             .recipient(this.recipient)
             .content(this.content)
+            .billId(this.billId) 
             .retryCount(this.retryCount + 1)  // 카운트 증가
             .scheduledAt(this.scheduledAt)
             .sentAt(null)  // 재시도이므로 null
@@ -82,6 +86,7 @@ public class Notification {
             .userId(this.userId)
             .notificationType(this.notificationType)
             .notificationStatus("FAILED")
+            .billId(this.billId) 
             .recipient(this.recipient)
             .content(this.content)
             .retryCount(this.retryCount)

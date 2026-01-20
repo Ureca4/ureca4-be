@@ -2,6 +2,7 @@ package com.ureca.billing.core.config;
 
 import java.sql.Date;
 import java.sql.Timestamp;
+import java.sql.Types;
 
 import javax.sql.DataSource;
 
@@ -22,10 +23,12 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import com.ureca.billing.core.entity.MicroPayments;
 import com.ureca.billing.core.entity.UserAddons;
+import com.ureca.billing.core.entity.UserNotificationPrefs;
 import com.ureca.billing.core.entity.UserPlans;
 import com.ureca.billing.core.entity.Users;
 import com.ureca.billing.core.util.SequenceItemReader;
 import com.ureca.billing.core.util.UserDummyProcessor;
+import com.ureca.billing.core.util.UserNotificationPrefsDummyProcessor;
 import com.ureca.billing.core.util.UserPlanDummyProcessor;
 
 import lombok.RequiredArgsConstructor;
@@ -180,6 +183,50 @@ public class DummyDataJobConfig {
                 .writer(writer)
                 .build();
     }
+    //UserNotificationPrefs 더미 Step
+    @Bean
+    public Step userNotificationPrefsDummyStep(
+            ItemReader<Users> reader,
+            UserNotificationPrefsDummyProcessor processor
+    ) {
+        JdbcBatchItemWriter<UserNotificationPrefs> writer =
+            new JdbcBatchItemWriter<>();
+
+        writer.setDataSource(dataSource);
+        writer.setSql("""
+            INSERT INTO USER_NOTIFICATION_PREFS
+            (user_id, channel, enabled, priority,
+             quiet_start, quiet_end, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """);
+
+        writer.setItemPreparedStatementSetter((prefs, ps) -> {
+            ps.setLong(1, prefs.getUserId());
+            ps.setString(2, prefs.getChannel());
+            ps.setBoolean(3, prefs.getEnabled());
+            ps.setInt(4, prefs.getPriority());
+
+            if (prefs.getQuietStart() != null) {
+                ps.setTime(5, prefs.getQuietStart());
+                ps.setTime(6, prefs.getQuietEnd());
+            } else {
+                ps.setNull(5, Types.TIME);
+                ps.setNull(6, Types.TIME);
+            }
+
+            ps.setTimestamp(7, Timestamp.valueOf(prefs.getCreatedAt()));
+            ps.setTimestamp(8, Timestamp.valueOf(prefs.getUpdatedAt()));
+        });
+
+        writer.afterPropertiesSet();
+
+        return new StepBuilder("userNotificationPrefsDummyStep", jobRepository)
+            .<Users, UserNotificationPrefs>chunk(1000, transactionManager)
+            .reader(reader)
+            .processor(processor)
+            .writer(writer)
+            .build();
+    }
 
     /**
      * 전체 더미 Job
@@ -190,13 +237,15 @@ public class DummyDataJobConfig {
     		@Qualifier("usersDummyStep")Step usersDummyStep,
     		@Qualifier("userPlansDummyStep") Step userPlansDummyStep,
     		@Qualifier("userAddonsDummyStep") Step userAddonsDummyStep,
-    		@Qualifier("microPaymentsDummyStep") Step microPaymentsDummyStep
+    		@Qualifier("microPaymentsDummyStep") Step microPaymentsDummyStep,
+    		@Qualifier("userNotificationPrefsDummyStep") Step userNotificationPrefsDummyStep
     		) {
         return new JobBuilder("dummyDataJob", jobRepository)
                 .start(usersDummyStep)
                 .next(userPlansDummyStep)
                 .next(userAddonsDummyStep)
                 .next(microPaymentsDummyStep)
+                .next(userNotificationPrefsDummyStep)
                 .build();
     }
 }

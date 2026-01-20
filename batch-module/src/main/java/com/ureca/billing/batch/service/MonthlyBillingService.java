@@ -209,7 +209,7 @@ public class MonthlyBillingService {
             FROM USER_NOTIFICATION_PREFS
             WHERE enabled = 1
               AND user_id IN (:userIds)
-              AND channel IN ('EMAIL','SMS')   -- OUTBOX enum이 EMAIL/SMS만이라 일단 제한
+              AND channel IN ('EMAIL','SMS','PUSH')   -- OUTBOX enum이 EMAIL/SMS만이라 일단 제한
         """, Map.of("userIds", userIds), (RowCallbackHandler) rs -> {
             long uid = rs.getLong("user_id");
             String channel = rs.getString("channel");

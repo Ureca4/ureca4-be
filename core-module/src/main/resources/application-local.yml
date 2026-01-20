@@ -23,3 +23,5 @@ spring:
   crypto:
     aes:
       key: ${AES_SECRET_KEY}
+    hash:
+      key: ${HASH_SECRET_KEY}

@@ -5,4 +5,4 @@ crypto:
   aes:
     key: ${AES_SECRET_KEY}
   hash:
-    key: ${HASH_SECRET_KEY}
+    key: ${HASH_SECRET_KEY:Q8v9K2MZP0D3wF4xR5cN7yA1bT+JH=}

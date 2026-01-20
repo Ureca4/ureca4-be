@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ureca.billing.core.dto.BillingMessageDto;
 import com.ureca.billing.notification.service.MessagePolicyService;
 import com.ureca.billing.notification.service.WaitingQueueService;
+
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -24,6 +26,14 @@ public class WaitingQueueScheduler {
     private final MessagePolicyService policyService;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
+    
+    private volatile boolean isShuttingDown = false; 
+    
+    @PreDestroy  
+    public void onShutdown() {
+        isShuttingDown = true;
+        log.info("🛑 Scheduler shutting down...");
+    }
     
     /**
      * 매일 08:00에 대기열 메시지 재발송

@@ -14,6 +14,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import com.ureca.billing.core.entity.NotificationType;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -70,15 +71,17 @@ public class UserDummyProcessor implements ItemProcessor<Long, Users> {
 
         UserStatus status = UserStatus.ACTIVE;
 
-        return new Users(
-            emailCipher,
-            emailHash,
-            phoneCipher,
-            phoneHash,
-            name,
-            birthDate,
-            status
-        );
+        NotificationType[] types = NotificationType.values();
+
+        return Users.builder()
+                .emailCipher(emailCipher)
+                .emailHash(emailHash)
+                .phoneCipher(phoneCipher)
+                .phoneHash(phoneHash)
+                .name(name)
+                .birthDate(birthDate)
+                .status(status)
+                .build();
     }
 
     // AES-256-GCM 암호화

@@ -80,9 +80,10 @@ public class DummyDataJobConfig {
         JdbcBatchItemWriter<Users> writer = new JdbcBatchItemWriter<>();
         writer.setDataSource(dataSource);
         writer.setSql("""
-            INSERT INTO USERS (email_cipher, email_hash, phone_cipher, phone_hash, name, birth_date, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """);
+        INSERT INTO USERS (email_cipher, email_hash, phone_cipher, phone_hash, name, birth_date, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """);
+
         writer.setItemPreparedStatementSetter((user, ps) -> {
             ps.setString(1, user.getEmailCipher());
             ps.setString(2, user.getEmailHash());

@@ -20,6 +20,21 @@ spring:
 
   kafka:
     bootstrap-servers: ${KAFKA_SERVERS}
+    producer:
+      # Key는 그냥 문자열로 보냄
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Value(우리 DTO)는 JSON으로 변환해서 보냄 (중요!)
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui
+    container_name: kafka-ui
+    ports:
+      - "8090:8080"
+    restart: always
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092 # 카프카 컨테이너 이름:포트
 
   batch:
     job:
@@ -33,3 +48,8 @@ spring:
       key: ${AES_SECRET_KEY}
     hash:
       key: ${HASH_SECRET_KEY}
+
+app:
+  kafka:
+    topics:
+      billing-notification: billing-notification-topic

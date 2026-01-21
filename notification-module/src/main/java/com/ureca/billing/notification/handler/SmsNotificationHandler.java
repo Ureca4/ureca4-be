@@ -56,7 +56,7 @@ public class SmsNotificationHandler implements NotificationHandler {
             );
             
             // 발송 완료 마킹
-            duplicateCheckHandler.markAsSent(message.getBillId());
+            duplicateCheckHandler.markAsSent(message.getBillId(), "SMS");
             
             // DB 저장
             saveNotification(message, "SENT", null, traceId);

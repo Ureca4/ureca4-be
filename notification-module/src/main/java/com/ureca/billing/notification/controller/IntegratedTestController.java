@@ -246,6 +246,101 @@ public class IntegratedTestController {
         
         return ResponseEntity.ok(response);
     }
+ // ========================================
+    // Push 알림 및 SMS 테스트
+    // ========================================
+    
+    @Operation(summary = "1-8. Push 알림 발송 테스트",
+               description = "Push 알림 발송 시뮬레이션 테스트 (중복 방지 포함)")
+    @PostMapping("/send-push")
+    public ResponseEntity<Map<String, Object>> testSendPush(@RequestBody BillingMessageDto message) {
+        LocalTime now = LocalTime.now();
+        log.info("🧪 Push 발송 테스트 요청. userId={}, billId={}, currentTime={}", 
+                message.getUserId(), message.getBillId(), now);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("userId", message.getUserId());
+        response.put("billId", message.getBillId());
+        response.put("currentTime", now.toString());
+        response.put("channel", "PUSH");
+        
+        // 1. 중복 체크
+        if (duplicateCheckHandler.isDuplicate(message.getBillId(), "PUSH")) {
+            log.warn("⚠️ 중복 Push 차단. billId={}", message.getBillId());
+            response.put("action", "DUPLICATE_BLOCKED");
+            response.put("message", "⚠️ 이미 발송된 Push 알림입니다. 중복 발송이 차단되었습니다.");
+            return ResponseEntity.ok(response);
+        }
+        
+        try {
+            // 2. Push 발송 시뮬레이션
+            log.info("🔔 [Push 발송 시뮬레이션] userId={}, billId={}, amount={}원", 
+                    message.getUserId(),
+                    message.getBillId(),
+                    message.getTotalAmount() != null ? String.format("%,d", message.getTotalAmount()) : "0");
+            
+            // 3. 발송 완료 마킹
+            duplicateCheckHandler.markAsSent(message.getBillId(), "PUSH");
+            
+            response.put("action", "SENT");
+            response.put("message", "✅ Push 알림이 즉시 발송되었습니다.");
+            response.put("recipient", "userId:" + message.getUserId());
+            
+        } catch (Exception e) {
+            log.error("❌ Push 발송 실패. billId={}, error={}", message.getBillId(), e.getMessage());
+            response.put("action", "FAILED");
+            response.put("message", "❌ 발송 실패: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    @Operation(summary = "1-9. SMS 발송 테스트",
+               description = "SMS 발송 시뮬레이션 테스트 (중복 방지 포함)")
+    @PostMapping("/send-sms")
+    public ResponseEntity<Map<String, Object>> testSendSms(@RequestBody BillingMessageDto message) {
+        LocalTime now = LocalTime.now();
+        log.info("🧪 SMS 발송 테스트 요청. userId={}, billId={}, currentTime={}", 
+                message.getUserId(), message.getBillId(), now);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("userId", message.getUserId());
+        response.put("billId", message.getBillId());
+        response.put("currentTime", now.toString());
+        response.put("channel", "SMS");
+        
+        // 1. 중복 체크
+        if (duplicateCheckHandler.isDuplicate(message.getBillId(), "SMS")) {
+            log.warn("⚠️ 중복 SMS 차단. billId={}", message.getBillId());
+            response.put("action", "DUPLICATE_BLOCKED");
+            response.put("message", "⚠️ 이미 발송된 SMS입니다. 중복 발송이 차단되었습니다.");
+            return ResponseEntity.ok(response);
+        }
+        
+        try {
+            // 2. SMS 발송 시뮬레이션
+            log.info("📱 [SMS 발송 시뮬레이션] to={}, billId={}, amount={}원", 
+                    message.getRecipientPhone(),
+                    message.getBillId(),
+                    message.getTotalAmount() != null ? String.format("%,d", message.getTotalAmount()) : "0");
+            
+            // 3. 발송 완료 마킹
+            duplicateCheckHandler.markAsSent(message.getBillId(), "SMS");
+            
+            response.put("action", "SENT");
+            response.put("message", "✅ SMS가 즉시 발송되었습니다.");
+            response.put("recipient", message.getRecipientPhone());
+            
+        } catch (Exception e) {
+            log.error("❌ SMS 발송 실패. billId={}, error={}", message.getBillId(), e.getMessage());
+            response.put("action", "FAILED");
+            response.put("message", "❌ 발송 실패: " + e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
+        
+        return ResponseEntity.ok(response);
+    }
     
     // ========================================
     // Private Helper Methods

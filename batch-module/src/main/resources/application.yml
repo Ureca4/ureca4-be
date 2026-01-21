@@ -54,3 +54,6 @@ app:
   kafka:
     topics:
       billing-notification: billing-event
+
+server:
+  port: 8081

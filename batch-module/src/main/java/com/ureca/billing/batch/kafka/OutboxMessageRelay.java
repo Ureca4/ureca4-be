@@ -38,7 +38,11 @@ public class OutboxMessageRelay {
 
         // 2. 카프카로 병렬 전송 (비동기)
         List<CompletableFuture<SendResult<String, String>>> futures = events.stream()
-                .map(event -> kafkaTemplate.send(topicName, event.eventId(), event.payload()))
+                .map(event -> kafkaTemplate.send(
+                        topicName,                       // 1. Topic
+                        String.valueOf(event.eventId()),  // 2. Key
+                        event.payload()                  // 3. Data (Value)
+                ))
                 .toList();
 
         // 3. 모든 전송이 끝날 때까지 대기 (Kafka가 빠르니 금방 끝남)

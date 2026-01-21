@@ -6,11 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
@@ -207,7 +203,7 @@ public class MonthlyBillingService {
          * ========================= */
 
         // 5-1) prefs 조회: (EMAIL/SMS만) enabled=1
-        Map<Long, List<String>> channelsByUser = new HashMap<>();
+        Map<Long, Set<String>> channelsByUser = new HashMap<>();
         namedJdbc.query("""
             SELECT user_id, channel
             FROM USER_NOTIFICATION_PREFS
@@ -217,7 +213,7 @@ public class MonthlyBillingService {
         """, Map.of("userIds", userIds), (RowCallbackHandler) rs -> {
             long uid = rs.getLong("user_id");
             String channel = rs.getString("channel");
-            channelsByUser.computeIfAbsent(uid, k -> new ArrayList<>()).add(channel);
+            channelsByUser.computeIfAbsent(uid, k -> new HashSet<>()).add(channel);
         });
 
         // 5-2) outbox row 생성
@@ -228,7 +224,7 @@ public class MonthlyBillingService {
             Long billId = billIdByUser.get(uid);
             if (billId == null) continue;
 
-            List<String> channels = channelsByUser.getOrDefault(uid, List.of());
+            Set<String> channels = channelsByUser.getOrDefault(uid, Set.of());
             if (channels.isEmpty()) continue;
 
             UserContactInfo contact = userContacts.get(uid);

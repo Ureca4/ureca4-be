@@ -45,7 +45,6 @@ spring:
 
   batch:
     job:
-      name: monthlyBillingJob
       enabled: true
     jdbc:
       initialize-schema: always

@@ -20,14 +20,19 @@ public class MonthlyBillingWriter implements ItemWriter<Long> {
 
     private final MonthlyBillingService billingService;
 
-    @Value("#{jobParameters['billingMonth'] ?: T(java.time.YearMonth).now().toString()}")
+    @Value("#{jobParameters['billingMonth']}")
     private String billingMonth;
 
     @Override
     public void write(Chunk<? extends Long> chunk) {
+        if (billingMonth == null) {
+            throw new IllegalStateException("billingMonth 파라미터가 없습니다");
+        }
+
         billingService.process(
                 new ArrayList<>(chunk.getItems()),
                 YearMonth.parse(billingMonth)
         );
     }
+
 }

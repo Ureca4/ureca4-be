@@ -20,7 +20,7 @@ import java.util.stream.StreamSupport;
  * 
  * - FAILED 메시지 재시도
  * - Notification 상태 모니터링
- * - DLT 메시지 관리
+ * - DLT 메시지 관리 (SMS Fallback)
  */
 @Tag(name = "6. 재시도/DLT 관리", description = "실패 메시지 재시도 및 DLT 관리 API")
 @RestController
@@ -178,7 +178,7 @@ public class RetryController {
     }
     
     // ========================================
-    // DLT 관리
+    // DLT 관리 (SMS Fallback)
     // ========================================
     
     @Operation(summary = "6-6. 최대 재시도 도달 메시지 조회", 
@@ -188,13 +188,15 @@ public class RetryController {
             @Parameter(description = "조회할 최대 개수")
             @RequestParam(defaultValue = "20") int limit) {
         
-        Iterable<Notification> all = notificationRepository.findAll();
-        
-        List<Map<String, Object>> dltCandidates = StreamSupport.stream(all.spliterator(), false)
-                .filter(n -> "FAILED".equals(n.getNotificationStatus()) && n.getRetryCount() >= 3)
+        List<Notification> dltCandidates = notificationRepository.findMaxRetryFailedMessages()
+                .stream()
                 .limit(limit)
+                .toList();
+        
+        List<Map<String, Object>> messageList = dltCandidates.stream()
                 .map(n -> Map.<String, Object>of(
                     "notificationId", n.getNotificationId(),
+                    "billId", n.getBillId() != null ? n.getBillId() : "N/A",
                     "userId", n.getUserId(),
                     "retryCount", n.getRetryCount(),
                     "errorMessage", n.getErrorMessage() != null ? n.getErrorMessage() : "N/A",
@@ -202,10 +204,75 @@ public class RetryController {
                 ))
                 .toList();
         
+        // 전체 개수 조회
+        int totalCount = notificationRepository.findMaxRetryFailedMessages().size();
+        
         return ResponseEntity.ok(Map.of(
-            "count", dltCandidates.size(),
-            "description", "3회 재시도 후 최종 실패한 메시지 (수동 처리 필요)",
-            "messages", dltCandidates
+            "count", messageList.size(),
+            "totalDltCandidates", totalCount,
+            "description", "3회 재시도 후 최종 실패한 메시지 (SMS Fallback 대상)",
+            "messages", messageList
+        ));
+    }
+    
+    @Operation(summary = "6-7. ✅ DLT 일괄 전송 (SMS Fallback)", 
+               description = """
+                   3회 실패한 EMAIL 메시지들을 DLT 토픽으로 일괄 전송합니다.
+                   
+                   **플로우:**
+                   1. retry_count >= 3인 FAILED EMAIL 메시지 조회
+                   2. DLT 토픽 (billing-event.DLT)으로 전송
+                   3. DeadLetterConsumer가 자동으로 SMS Fallback 처리
+                   
+                   **예상 결과:**
+                   - EMAIL FAILED → SMS SENT로 대체 발송
+                   """)
+    @PostMapping("/send-to-dlt")
+    public ResponseEntity<Map<String, Object>> sendFailedToDlt(
+            @Parameter(description = "처리할 최대 개수")
+            @RequestParam(defaultValue = "100") int maxCount) {
+        
+        // 전송 전 상태 확인
+        List<Notification> beforeSend = notificationRepository.findMaxRetryFailedMessages();
+        int beforeCount = beforeSend.size();
+        
+        if (beforeCount == 0) {
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "📭 DLT 전송 대상 메시지가 없습니다.",
+                "dltCandidates", 0
+            ));
+        }
+        
+        // DLT 일괄 전송 실행
+        int sentCount = retryService.sendExistingFailedToDlt(maxCount);
+        
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "dltCandidates", beforeCount,
+            "sentToDlt", sentCount,
+            "message", String.format("✅ DLT 전송 완료! %d건 중 %d건 전송. SMS Fallback 처리 예정.", 
+                    beforeCount, sentCount),
+            "nextSteps", Map.of(
+                "step1", "DeadLetterConsumer가 DLT 메시지 수신",
+                "step2", "EMAIL 최종 실패로 인식",
+                "step3", "SMS 자동 Fallback 발송",
+                "step4", "notifications 테이블에 SMS SENT 기록"
+            )
+        ));
+    }
+    
+    @Operation(summary = "6-8. DLT 전송 대상 개수 조회", 
+               description = "SMS Fallback 대상 (retry_count >= 3) 개수")
+    @GetMapping("/dlt-count")
+    public ResponseEntity<Map<String, Object>> getDltCount() {
+        int count = notificationRepository.findMaxRetryFailedMessages().size();
+        
+        return ResponseEntity.ok(Map.of(
+            "dltCandidates", count,
+            "message", count > 0 
+                ? String.format("📬 SMS Fallback 대상: %d건. POST /api/retry/send-to-dlt 로 일괄 처리 가능", count)
+                : "📭 SMS Fallback 대상 없음"
         ));
     }
 }

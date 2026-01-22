@@ -1,5 +1,6 @@
 package com.ureca.billing.notification.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ureca.billing.core.dto.BillingMessageDto;
 import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
 import com.ureca.billing.notification.domain.dto.QuietTimeCheckResult;
@@ -14,11 +15,13 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.Map;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 통합 테스트 Controller
@@ -43,6 +46,7 @@ public class IntegratedTestController {
     private final WaitingQueueService queueService;
     private final EmailService emailService;
     private final DuplicateCheckHandler duplicateCheckHandler;
+    private final KafkaTemplate<String, String> kafkaTemplate;
     
     // ========================================
     // EMAIL 직접 발송
@@ -370,6 +374,44 @@ public class IntegratedTestController {
         
         // 3. 발송
         return executeDelivery(message, type, response);
+    }
+    
+    @Operation(summary = "DLT 테스트 - 간단 버전")
+    @PostMapping("/dlt/test-simple")
+    public ResponseEntity<Map<String, Object>> testDltSimple(
+            @RequestParam Long billId,
+            @RequestParam Long userId) {
+        
+        Map<String, Object> response = new HashMap<>();
+        
+        try {
+            BillingMessageDto message = BillingMessageDto.builder()
+                    .billId(billId)
+                    .userId(userId)
+                    .recipientEmail("test@test.com")
+                    .recipientPhone("010-1234-5678")
+                    .totalAmount(85000L)
+                    .billYearMonth("2026-01")
+                    .dueDate("2026-02-05")
+                    .notificationType("EMAIL")
+                    .build();
+            
+          // ✅ JSON 문자열로 변환해서 전송
+            ObjectMapper objectMapper = new ObjectMapper();
+            String messageJson = objectMapper.writeValueAsString(message);
+            
+            // DLT 토픽으로 직접 전송 (BillingMessageDto 타입)
+            kafkaTemplate.send("billing-event.DLT", billId.toString(), messageJson);
+            
+            response.put("result", "SUCCESS");
+            response.put("message", "✅ DLT 테스트 메시지 전송 완료!");
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            response.put("result", "FAILED");
+            response.put("error", e.getMessage());
+            return ResponseEntity.status(500).body(response);
+        }
     }
     
     /**

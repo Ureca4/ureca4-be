@@ -1,5 +1,7 @@
 package com.ureca.billing.batch.util;
 
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.Map;
 
 import javax.sql.DataSource;
@@ -22,22 +24,44 @@ public class MonthlyBillingItemReader {
 	private final DataSource dataSource;
 	
 	@Bean
-    @StepScope
-    public ItemReader<Long> billingUserReader(
-            @Value("#{jobParameters['billingMonth']}") String billingMonth
-    ) {
-        JdbcPagingItemReader<Long> reader = new JdbcPagingItemReader<>();
-        reader.setDataSource(dataSource);
-        reader.setFetchSize(100);
-        reader.setRowMapper((rs, rowNum) -> rs.getLong("user_id"));
+	@StepScope
+	public ItemReader<Long> billingUserReader(
+	    @Value("#{jobParameters['billingMonth']}") String billingMonth
+	) {
+	    YearMonth ym = YearMonth.parse(billingMonth);
+	    LocalDate monthStart = ym.atDay(1);
+	    LocalDate nextMonthStart = ym.plusMonths(1).atDay(1);
 
-        MySqlPagingQueryProvider queryProvider = new MySqlPagingQueryProvider();
-        queryProvider.setSelectClause("user_id");
-        queryProvider.setFromClause("from USERS");
-        queryProvider.setWhereClause("status = 'ACTIVE'");
-        queryProvider.setSortKeys(Map.of("user_id", Order.ASCENDING));
+	    JdbcPagingItemReader<Long> reader = new JdbcPagingItemReader<>();
+	    reader.setDataSource(dataSource);
+	    reader.setFetchSize(1000);
+	    reader.setRowMapper((rs, rowNum) -> rs.getLong("user_id"));
 
-        reader.setQueryProvider(queryProvider);
-        return reader;
-    }
+	    MySqlPagingQueryProvider qp = new MySqlPagingQueryProvider();
+	    qp.setSelectClause("DISTINCT u.user_id");
+	    qp.setFromClause("""
+	        FROM USERS u
+	        LEFT JOIN USER_PLANS up ON up.user_id = u.user_id
+	        LEFT JOIN USER_ADDONS ua ON ua.user_id = u.user_id
+	    """);
+	    qp.setWhereClause("""
+	        (
+	            (up.start_date < :nextMonthStart
+	             AND (up.end_date IS NULL OR up.end_date >= :monthStart))
+	        OR
+	            (ua.start_date < :nextMonthStart
+	             AND (ua.end_date IS NULL OR ua.end_date >= :monthStart))
+	        )
+	    """);
+	    qp.setSortKeys(Map.of("u.user_id", Order.ASCENDING));
+
+	    reader.setQueryProvider(qp);
+	    reader.setParameterValues(Map.of(
+	        "monthStart", monthStart,
+	        "nextMonthStart", nextMonthStart
+	    ));
+
+	    return reader;
+	}
+
 }

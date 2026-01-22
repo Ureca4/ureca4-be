@@ -72,8 +72,9 @@ public class MonthlyBillingService {
             SELECT up.user_id, p.monthly_fee, p.plan_name
             FROM USER_PLANS up
             JOIN PLANS p ON p.plan_id = up.plan_id
-            WHERE up.status = 'ACTIVE'
-              AND up.user_id IN (:userIds)
+            WHERE up.user_id IN (:userIds)
+        		AND up.start_date < :nextMonthStart
+        		AND (up.end_date IS NULL OR up.end_date >= :monthStart)
         """, params, (RowCallbackHandler) rs -> {
             long uid = rs.getLong("user_id");
             planFees.put(uid, rs.getLong("monthly_fee"));
@@ -85,8 +86,10 @@ public class MonthlyBillingService {
             SELECT ua.user_id, a.monthly_fee
             FROM USER_ADDONS ua
             JOIN ADDONS a ON a.addon_id = ua.addon_id
-            WHERE ua.status = 'ACTIVE'
-              AND ua.user_id IN (:userIds)
+            WHERE ua.user_id IN (:userIds)
+        		AND ua.start_date < :nextMonthStart
+        		AND (ua.end_date IS NULL OR ua.end_date >= :monthStart)
+
         """, params, (RowCallbackHandler) rs -> {
             long uid = rs.getLong("user_id");
             addonFees

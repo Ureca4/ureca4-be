@@ -1,6 +1,7 @@
 package com.ureca.billing.batch.config;
 
 import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobParametersInvalidException;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
@@ -35,9 +36,21 @@ public class MonthlyBillingJobConfig {
     }
 
     //Job
+    /* 파라미터 예시
+     --spring.batch.job.name=monthlyBillingJob
+		billingMonth=2025-08
+    */
     @Bean
-    public Job monthlyBillingJob(JobRepository jobRepository, Step monthlyBillingStep) {
+    public Job monthlyBillingJob(
+    		JobRepository jobRepository, 
+    		@Qualifier("monthlyBillingStep") Step monthlyBillingStep
+    ) {
         return new JobBuilder("monthlyBillingJob", jobRepository)
+        		.validator(parameters -> {
+                    if (!parameters.getParameters().containsKey("billingMonth")) {
+                        throw new JobParametersInvalidException("billingMonth 파라미터는 필수입니다 (yyyy-MM)");
+                    }
+                })
                 .start(monthlyBillingStep)
                 .build();
     }

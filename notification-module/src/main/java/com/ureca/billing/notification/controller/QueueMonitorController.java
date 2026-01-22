@@ -1,8 +1,11 @@
 package com.ureca.billing.notification.controller;
 
 import java.util.Map;
+
 import java.util.Set;
 
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -36,6 +39,8 @@ public class QueueMonitorController {
     private final WaitingQueueService queueService;
     private final MessagePolicyService policyService;
     private final ObjectMapper objectMapper;
+    private final KafkaTemplate<String, String> kafkaTemplate;      
+    private final RedisTemplate<String, String> redisTemplate; 
     
     // ========================================
     // 대기열 상태 조회
@@ -81,6 +86,60 @@ public class QueueMonitorController {
             "nextProcessTime", isBlockTime ? "08:00" : "즉시 처리 가능"
         ));
     }
+    
+ // ========================================
+ // 대기열 수동 처리
+ // ========================================
+
+ @Operation(summary = "4-7. 대기열 수동 처리", 
+            description = "대기열의 메시지를 즉시 Kafka로 재발행 (금지시간 무시)")
+ @PostMapping("/process")
+ public ResponseEntity<Map<String, Object>> processQueue(
+         @Parameter(description = "처리할 최대 개수")
+         @RequestParam(defaultValue = "100") int maxCount) {
+     
+     long beforeSize = queueService.getQueueSize();
+     
+     if (beforeSize == 0) {
+         return ResponseEntity.ok(Map.of(
+             "success", true,
+             "message", "📭 대기열이 비어있습니다.",
+             "processed", 0,
+             "beforeSize", 0,
+             "afterSize", 0
+         ));
+     }
+     
+     Set<String> messages = queueService.getReadyMessages(maxCount);
+     
+     if (messages == null || messages.isEmpty()) {
+         // Ready 메시지가 없으면 전체 조회 (강제 처리)
+         messages = redisTemplate.opsForZSet().range("queue:message:waiting", 0, maxCount - 1);
+     }
+     
+     int successCount = 0;
+     int failCount = 0;
+     
+     for (String messageJson : messages) {
+         try {
+             kafkaTemplate.send("billing-event", messageJson);
+             queueService.removeFromQueue(messageJson);
+             successCount++;
+         } catch (Exception e) {
+             failCount++;
+             log.error("❌ Failed to process message: {}", e.getMessage());
+         }
+     }
+     
+     return ResponseEntity.ok(Map.of(
+         "success", true,
+         "message", String.format("✅ 대기열 처리 완료. %d건 성공, %d건 실패", successCount, failCount),
+         "processed", successCount,
+         "failed", failCount,
+         "beforeSize", beforeSize,
+         "afterSize", queueService.getQueueSize()
+     ));
+ }
     
     // ========================================
     // 대기열 메시지 관리

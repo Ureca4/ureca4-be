@@ -33,6 +33,7 @@ services:
     container_name: lgubill-batch
     env_file:
       - .env.docker
+    profiles: ["job"]
     environment:
       SPRING_PROFILES_ACTIVE: docker
     ports:

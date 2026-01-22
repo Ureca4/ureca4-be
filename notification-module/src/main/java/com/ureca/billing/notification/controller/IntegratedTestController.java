@@ -1,6 +1,5 @@
 package com.ureca.billing.notification.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ureca.billing.core.dto.BillingMessageDto;
 import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
 import com.ureca.billing.notification.domain.dto.QuietTimeCheckResult;

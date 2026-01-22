@@ -56,7 +56,7 @@ public class EmailService {
         
         // 시도 횟수에 따른 실패율 적용
         int failureRate = (deliveryAttempt == 1) ? initialFailureRate : retryFailureRate;
-        if (random.nextInt(50) < failureRate) {
+        if (random.nextInt(100) < failureRate) {
             log.error("❌ [의도적 실패] 시도 {}회, 실패율 {}%, billId={}",
             		deliveryAttempt, failureRate, message.getBillId());
             throw new RuntimeException(String.format(

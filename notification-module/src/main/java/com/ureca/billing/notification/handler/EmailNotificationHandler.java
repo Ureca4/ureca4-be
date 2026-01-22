@@ -87,20 +87,12 @@ public class EmailNotificationHandler implements NotificationHandler {
             // 발송 시도
             emailService.sendEmail(message, deliveryAttempt);
             
-            // 발송 완료 마킹
-            duplicateCheckHandler.markAsSent(message.getBillId(), "EMAIL");
-            
-            // DB 저장
-            saveNotification(message, "SENT", null, traceId);
             
             log.info("{} ✅ EMAIL 발송 성공 (시도 {}회) - billId={}", traceId, deliveryAttempt, message.getBillId());
             
         } catch (Exception e) {
             log.error("{} ❌ EMAIL 발송 실패 (시도 {}회) - billId={}, error={}", 
                 traceId, deliveryAttempt, message.getBillId(), e.getMessage());
-
-            // 실패 저장
-            saveNotification(message, "FAILED", e.getMessage(), traceId);
             
             // 예외 재발생 → Kafka 재시도 또는 DLT
             throw new RuntimeException("Email send failed", e);

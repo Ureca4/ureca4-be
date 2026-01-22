@@ -24,6 +24,28 @@ services:
     # 컨테이너가 끝나도 재시작하지 않음
     restart: "no"
 
+  batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MODULE: batch-module
+    container_name: lgubill-batch
+    env_file:
+      - .env.docker
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8083:8080"  # admin(8081), noti(8082)와 겹치지 않게 8083 할당
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
   admin:
     build:
       context: .

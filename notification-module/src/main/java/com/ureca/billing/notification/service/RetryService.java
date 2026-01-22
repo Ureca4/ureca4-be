@@ -7,11 +7,14 @@ import com.ureca.billing.notification.domain.entity.Notification;
 import com.ureca.billing.notification.domain.repository.NotificationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 재시도 서비스
@@ -40,6 +43,7 @@ public class RetryService {
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
     private final DuplicateCheckHandler duplicateCheckHandler;  
+    private final JdbcTemplate jdbcTemplate;
     
     
     /**
@@ -161,22 +165,28 @@ public class RetryService {
     * SMS 발송에 필요한 정보 포함
     */
    private BillingMessageDto reconstructMessageForDlt(Notification notification) {
+	   
+       // 1. bills 테이블에서 청구 정보 조회
+       Map<String, Object> billInfo = getBillInfo(notification.getBillId());
+       
+       // 2. users 테이블에서 전화번호 조회
+       String phoneCipher = getPhoneCipherByUserId(notification.getUserId());
+       
        return BillingMessageDto.builder()
            .billId(notification.getBillId())
            .userId(notification.getUserId())
            .recipientEmail(notification.getRecipient())  // EMAIL 수신자
-           .recipientPhone(getPhoneByUserId(notification.getUserId()))  // ✅ SMS용 전화번호
-           .totalAmount(50000L)  // TODO: 실제로는 DB에서 조회
-           .billYearMonth("2025-01")
-           .billDate("2025-01-25")
-           .dueDate("2025-02-10")
+           .recipientPhone(phoneCipher)  // ✅ 실제 전화번호 (암호화된 상태)
+           .totalAmount((Long) billInfo.get("totalAmount"))
+           .billYearMonth((String) billInfo.get("billingMonth"))
+           .billDate((String) billInfo.get("billDate"))
+           .dueDate((String) billInfo.get("dueDate"))
            .notificationType("EMAIL")  // 원래 타입
            .build();
    }
    
    /**
-    * userId로 전화번호 조회 (임시 구현)
-    * TODO: 실제로는 Users 테이블에서 조회
+    * userId로 전화번호 조회
     */
    private String getPhoneByUserId(Long userId) {
        // 임시: 마스킹된 전화번호 반환
@@ -189,22 +199,83 @@ public class RetryService {
      * Notification에서 BillingMessageDto 재구성 (재시도용)
      */
     private BillingMessageDto reconstructMessage(Notification notification) {
+    	
+        // bills 테이블에서 청구 정보 조회
+        Map<String, Object> billInfo = getBillInfo(notification.getBillId());
         
         return BillingMessageDto.builder()
         	.billId(notification.getBillId())  // ✅ notificationId 대신 billId 사용
             .userId(notification.getUserId())
             .recipientEmail(notification.getRecipient())
-            .recipientPhone(null)
-            .totalAmount(50000L)  // 임시 값 (실제로는 DB에서 조회)
-            .billYearMonth("2025-01")
-            .billDate("2025-01-25")
-            .dueDate("2025-02-10")
+            .recipientPhone(null) // EMAIL 재시도에는 전화번호 불필요
+            .totalAmount((Long) billInfo.get("totalAmount"))
+            .billYearMonth((String) billInfo.get("billingMonth"))
+            .billDate((String) billInfo.get("billDate"))
+            .dueDate((String) billInfo.get("dueDate"))
             .build();
     }
     
     /**
-     * ✅ 이미 retry_count >= 3인 FAILED 메시지들을 DLT로 일괄 전송
-     * (기존에 처리 안 된 968건 처리용)
+      * ✅ bills 테이블에서 청구 정보 조회
+     */
+    private Map<String, Object> getBillInfo(Long billId) {
+        try {
+            // bill_details에서 총 금액 계산
+            Long totalAmount = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(amount), 0) FROM bill_details WHERE bill_id = ?",
+                Long.class,
+                billId
+            );
+            
+            // bills 테이블에서 날짜 정보 조회
+            Map<String, Object> billData = jdbcTemplate.queryForMap(
+                """
+                SELECT billing_month, 
+                       DATE_FORMAT(bill_issue_date, '%Y-%m-%d') as bill_date,
+                       DATE_FORMAT(DATE_ADD(bill_issue_date, INTERVAL 15 DAY), '%Y-%m-%d') as due_date
+                FROM bills 
+                WHERE bill_id = ?
+                """,
+                billId
+            );
+            
+            return Map.of(
+                "totalAmount", totalAmount != null ? totalAmount : 0L,
+                "billingMonth", billData.get("billing_month") != null ? billData.get("billing_month").toString() : "N/A",
+                "billDate", billData.get("bill_date") != null ? billData.get("bill_date").toString() : "N/A",
+                "dueDate", billData.get("due_date") != null ? billData.get("due_date").toString() : "N/A"
+            );
+            
+        } catch (Exception e) {
+            log.warn("⚠️ [DB] bills 조회 실패. billId={}, error={}", billId, e.getMessage());
+            // 기본값 반환
+            return Map.of(
+                "totalAmount", 0L,
+                "billingMonth", "N/A",
+                "billDate", "N/A",
+                "dueDate", "N/A"
+            );
+        }
+    }
+    
+    /**
+     * ✅ users 테이블에서 전화번호 조회 (암호화된 상태)
+     */
+    private String getPhoneCipherByUserId(Long userId) {
+        try {
+            return jdbcTemplate.queryForObject(
+                "SELECT phone_cipher FROM users WHERE user_id = ?",
+                String.class,
+                userId
+            );
+        } catch (Exception e) {
+            log.warn("⚠️ [DB] users 전화번호 조회 실패. userId={}, error={}", userId, e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 기존 FAILED 메시지 DLT 일괄 전송
      */
     @Transactional
     public int sendExistingFailedToDlt(int limit) {

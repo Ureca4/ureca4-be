@@ -1,3 +1,0 @@
-spring:
-  config:
-    import: optional:file:../.env.prod[.properties]  # 상위 폴더 참조

@@ -42,21 +42,14 @@ docker compose -f docker-compose.infra.yml -f docker-compose.app.yml down
 (배치 모듈(`batch`)을 일회성으로 실행하여 데이터를 적재합니다.)
 
 ### 1) User 및 기초 데이터 생성 (가장 먼저 실행)
-```bash
-docker compose -f docker-compose.infra.yml -f docker-compose.app.yml \
-  run --rm batch `
-  java -jar /app/app.jar `
-  --spring.batch.job.name=userDummyDataJob
+```powershell
+docker compose -f docker-compose.infra.yml -f docker-compose.app.yml run --rm --build core-job java -jar /app/app.jar --spring.batch.job.name=userDummyDataJob
 ```
 
 ### 2) 월별 청구 더미 데이터 생성
 * **필수 파라미터:** `targetYearMonth=yyyy-MM`
-```bash
-docker compose -f docker-compose.infra.yml -f docker-compose.app.yml \
-  run --rm batch `
-  java -jar /app/app.jar `
-  --spring.batch.job.name=monthlyDummyDataJob `
-  targetYearMonth=2025-08
+```powershell
+docker compose -f docker-compose.infra.yml -f docker-compose.app.yml run --rm --build core-job java -jar /app/app.jar --spring.batch.job.name=monthlyDummyDataJob targetYearMonth=2025-08
 ```
 
 ---

@@ -17,7 +17,7 @@ public class KafkaTopicConfig {
     @Bean
     public NewTopic billingEventTopic() {
         return TopicBuilder.name("billing-event")  // 토픽 이름
-                .partitions(3)
+                .partitions(20)
                 .replicas(1)
                 .build();
     }

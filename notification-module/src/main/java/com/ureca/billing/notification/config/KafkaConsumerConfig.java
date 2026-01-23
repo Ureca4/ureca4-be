@@ -79,9 +79,9 @@ public class KafkaConsumerConfig {
         
         // 수동 커밋 모드
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
-        
-        // 동시성 설정 (기본값, @KafkaListener의 concurrency로 오버라이드 가능)
-        factory.setConcurrency(3);
+
+        // 이걸 켜야 Consumer가 List<ConsumerRecord> 형태로 데이터를 받을 수 있음
+        factory.setBatchListener(true);
         
         // Thread Pool 설정
         factory.getContainerProperties().setIdleBetweenPolls(100);  // Poll 간격 100ms

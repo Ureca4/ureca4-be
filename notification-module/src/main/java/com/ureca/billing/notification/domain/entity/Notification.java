@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 
 @Table("notifications")
 @Getter
+@Setter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder

@@ -27,11 +27,11 @@ public class PushNotificationHandler implements NotificationHandler {
     @Override
     @Transactional
     public void handle(BillingMessageDto message, String traceId) {
-        log.info("{} 🔔 PUSH 핸들러 처리 시작 - billId={}", traceId, message.getBillId());
+        //log.info("{} 🔔 PUSH 핸들러 처리 시작 - billId={}", traceId, message.getBillId());
         
         // 1. 중복 체크 (PUSH용 키)
         if (duplicateCheckHandler.isDuplicate(message.getBillId(), "PUSH")) {
-            log.warn("{} ⚠️ 중복 PUSH 스킵 - billId={}", traceId, message.getBillId());
+            //log.warn("{} ⚠️ 중복 PUSH 스킵 - billId={}", traceId, message.getBillId());
             return;
         }
         
@@ -47,17 +47,17 @@ public class PushNotificationHandler implements NotificationHandler {
     private void sendPush(BillingMessageDto message, String traceId) {
         try {
             // Push는 SMS와 동일하게 실패 처리 안함
-            log.info("{} 🔔 [PUSH 발송 시뮬레이션] to: userId={}, billId: {}, amount: {}원", 
-                traceId,
-                message.getUserId(),
-                message.getBillId(),
-                message.getTotalAmount() != null ? String.format("%,d", message.getTotalAmount()) : "0"
-            );
+            //log.info("{} 🔔 [PUSH 발송 시뮬레이션] to: userId={}, billId: {}, amount: {}원",
+//                traceId,
+//                message.getUserId(),
+//                message.getBillId(),
+//                message.getTotalAmount() != null ? String.format("%,d", message.getTotalAmount()) : "0"
+//            );
             
             // FCM/APNs 발송 시뮬레이션
             simulatePushDelivery(message, traceId);
             
-            log.info("{} ✅ PUSH 발송 성공 - billId={}", traceId, message.getBillId());
+            //log.info("{} ✅ PUSH 발송 성공 - billId={}", traceId, message.getBillId());
             
         } catch (Exception e) {
             log.error("{} ❌ PUSH 발송 실패 - billId={}, error={}", 

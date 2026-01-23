@@ -38,7 +38,7 @@ public class NotificationHandlerFactory {
             throw new IllegalArgumentException("Unknown notification type: " + type);
         }
         
-        log.debug("✅ 핸들러 선택: type={}, handler={}", type, handler.getClass().getSimpleName());
+        //log.debug("✅ 핸들러 선택: type={}, handler={}", type, handler.getClass().getSimpleName());
         return handler;
     }
     

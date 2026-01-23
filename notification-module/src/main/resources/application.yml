@@ -37,8 +37,8 @@ spring:
   kafka:
     bootstrap-servers: ${KAFKA_SERVERS}
     consumer:
-      max-poll-records: 100  # 한 번에 100개 메시지 처리
-      fetch-min-size: 1024  # 최소 1KB 데이터 대기
+      max-poll-records: 500  # 한 번에 100개 메시지 처리
+      fetch-min-size: 10240  # 최소 1KB 데이터 대기
       fetch-max-wait: 500  # 최대 0.5초 대기
       group-id: billing-group
       auto-offset-reset: latest

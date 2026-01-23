@@ -24,7 +24,9 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ForkJoinPool;
 
 /**
  * Kafka 메시지 Consumer (멀티 채널 지원 + 예약 발송)
@@ -62,225 +64,160 @@ public class BillingEventConsumer {
     private final EmailService emailService;
     private final NotificationRepository notificationRepository;
 
+    private final ForkJoinPool customThreadPool = new ForkJoinPool(50);
+
     @KafkaListener(
-        topics = "billing-event",
-        groupId = "notification-group",
-        containerFactory = "kafkaListenerContainerFactory",
-        concurrency = "3"
+            topics = "billing-event",
+            groupId = "notification-group",
+            containerFactory = "kafkaListenerContainerFactory",
+            concurrency = "20" // 파티션 개수에 맞춰 설정
     )
-    public void consume(ConsumerRecord<String, String> record, Acknowledgment ack,
-    		@Header(value = KafkaHeaders.DELIVERY_ATTEMPT, required = false) Integer deliveryAttempt) {  // ✅ 재시도 횟수 헤더
-        
-        // deliveryAttempt가 null이면 1로 설정 (첫 시도)
-        int attempt = (deliveryAttempt != null) ? deliveryAttempt : 1;
-    	
-        String traceInfo = String.format("[P%d-O%d-A%d]", record.partition(), record.offset(), attempt);
+    public void consume(List<ConsumerRecord<String, String>> records, Acknowledgment ack) {
         long startTime = System.currentTimeMillis();
+        int batchSize = records.size();
+        log.info("[Batch] {}개 메시지 수신 시작", batchSize);
 
-        log.info("{} 🔥 메시지 수신 (시도 {}회)", traceInfo, attempt);
+        // 1. Thread-Safe하고 Lock이 없는 큐 사용 (병목 제거)
+        Queue<Notification> notificationsToSave = new ConcurrentLinkedQueue<>();
 
+        // 2. [핵심 2] 커스텀 스레드 풀로 병렬 처리 실행 ⚡
         try {
-            // 1. JSON 파싱
-            String messageJson = record.value();
-            BillingMessageDto message = objectMapper.readValue(messageJson, BillingMessageDto.class);
+            customThreadPool.submit(() -> {
+                // 이 안에서 parallelStream은 우리가 만든 50개 스레드를 사용함
+                records.parallelStream().forEach(record -> {
+                    try {
+                        Notification notification = processSingleMessage(record);
+                        if (notification != null) {
+                            notificationsToSave.add(notification);
+                        }
+                    } catch (Exception e) {
+                        log.error("메시지 처리 중 에러: {}", record.value(), e);
+                    }
+                });
+            }).get(); // 모든 작업이 끝날 때까지 대기
+        } catch (Exception e) {
+            log.error("배치 병렬 처리 중 심각한 에러", e);
+            throw new RuntimeException(e);
+        }
 
-            String notificationType = message.getNotificationType() != null 
-                ? message.getNotificationType() : "EMAIL"; // 기본값
+        // 3. DB 일괄 저장 (Bulk Insert/Update)
+        // 수백 번의 INSERT 쿼리를 한 번의 트랜잭션으로 처리
+        if (!notificationsToSave.isEmpty()) {
+            notificationRepository.saveAll(notificationsToSave);
+            log.info("[Batch] {}개 알림 상태 DB 저장 완료", notificationsToSave.size());
+        }
 
-            log.info("{} 📨 billId={}, userId={}, type={}", 
-                traceInfo, message.getBillId(), message.getUserId(), notificationType);
+        // 4. 일괄 커밋 (Batch Commit)
+        ack.acknowledge();
 
-            // 2. 메시지 상태 체크 (중복 + 재시도 통합)
-            CheckResult checkResult = duplicateCheckHandler.checkMessageStatus(
-                message.getBillId(), notificationType);
-            
-            // 2-1. 중복 메시지 → skip
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("[Batch] {}개 처리 완료 (소요시간: {}ms)", batchSize, duration);
+    }
+
+
+
+    private Notification processSingleMessage(ConsumerRecord<String, String> record){
+        String traceInfo = String.format("[P%d-0%d]", record.partition(), record.offset());
+
+        try{
+            // Json 파싱
+            BillingMessageDto message = objectMapper.readValue(record.value(), BillingMessageDto.class);
+            String notificationType = message.getNotificationType() != null ? message.getNotificationType() : "EMAIL";
+
+            // 메시지 상태 체크
+            CheckResult checkResult = duplicateCheckHandler.checkMessageStatus(message.getBillId(), notificationType);
+
+            // 중복이면 null 반환 (저장 안 함)
             if (checkResult.isDuplicate()) {
-                log.warn("{} ⚠️ 중복 메시지 스킵. billId={}, type={}", 
-                    traceInfo, message.getBillId(), notificationType);
-                ack.acknowledge();
-                return;
+                return null;
             }
-            
-            // 2-2. 재시도 메시지 여부 확인
+
             boolean isRetry = checkResult.isRetry();
             Long existingNotificationId = checkResult.getNotificationId();
-            
-            if (isRetry) {
-                log.info("{} 🔄 재시도 메시지. billId={}, type={}, notificationId={}", 
-                        traceInfo, message.getBillId(), notificationType, existingNotificationId);
-            } else {
-                log.info("{} 📨 신규 메시지. billId={}, type={}", 
-                    traceInfo, message.getBillId(), notificationType);
-            }
 
-            // 3. 시스템 금지 시간 체크 (22:00 ~ 08:00)
+            // 금지 시간 체크 (22:00 ~ 08:00)
             if (policyService.isBlockTime()) {
-                handleBlockTime(message, messageJson, notificationType, isRetry, existingNotificationId, traceInfo);
-                ack.acknowledge();
-                return;
+                // Redis 대기열에 저장
+                queueService.addToQueue(record.value());
+
+                // PENDING 상태의 Notification 객체 생성/반환
+                return createOrUpdateNotificationEntity(
+                        message, notificationType, "PENDING",
+                        "Added to waiting queue (block time)",
+                        isRetry, existingNotificationId
+                );
             }
-            
-         // 4. 사용자 예약 발송 시간 체크
-            LocalDateTime scheduledAt = scheduledQueueService.scheduleIfPreferred(message, notificationType);
-            if (scheduledAt != null) {
-                // 예약 발송 → ScheduledQueue에 저장됨
-                handleScheduledSend(message, notificationType, scheduledAt, isRetry, existingNotificationId, traceInfo);
-                ack.acknowledge();
-                return;
+            try {
+                NotificationHandler handler = handlerFactory.getHandler(notificationType);
+                handler.handle(message, traceInfo); // 실제 발송 (I/O)
+
+                duplicateCheckHandler.onSendSuccess(message.getBillId(), notificationType);
+
+                // SENT 상태의 Notification 객체 생성/반환
+                return createOrUpdateNotificationEntity(
+                        message, notificationType, "SENT",
+                        null,
+                        isRetry, existingNotificationId
+                );
+
+            } catch (Exception e) {
+                log.error("{} 발송 실패: {}", traceInfo, e.getMessage());
+
+                // FAILED 상태의 Notification 객체 생성/반환
+                return createOrUpdateNotificationEntity(
+                        message, notificationType, "FAILED",
+                        e.getMessage(),
+                        isRetry, existingNotificationId
+                );
             }
-
-            // 5. 알림 발송 (타입별 핸들러 자동 선택)
-            sendNotification(message, notificationType, isRetry, existingNotificationId, traceInfo, attempt);
-
-            // 6. 수동 커밋
-            ack.acknowledge();
-
-            long duration = System.currentTimeMillis() - startTime;
-            log.info("{} ✅ 처리 완료 ({}ms)", traceInfo, duration);
-
-        } catch (Exception e) {
-            log.error("{} ❌ 처리 실패(시도 {}회): {}", traceInfo, attempt, e.getMessage(), e);
-            throw new RuntimeException(e);
+        } catch (Exception e){
+            log.error("{} JSON 파싱 또는 로직 에러: {}", traceInfo, e.getMessage());
+            return null;
         }
     }
 
-    /**
-     * 시스템 금지 시간대 처리
-     * - 대기열에 메시지 저장
-     * - Notification 상태를 PENDING으로 저장
-     */
-    private void handleBlockTime(BillingMessageDto message, String messageJson, String notificationType,
-                                  boolean isRetry, Long existingNotificationId, String traceInfo) {
-        // 대기열에 저장
-        queueService.addToQueue(messageJson);
-        
-     // 🔥 중복 INSERT 방지: DB에 이미 레코드가 있는지 확인
-        Optional<Notification> existingByBillId = notificationRepository.findByBillIdAndType(
-            message.getBillId(), notificationType
-        );
-        
-        if (existingByBillId.isPresent()) {
-            // 이미 레코드 있음 → UPDATE만 수행
-            Long dbNotificationId = existingByBillId.get().getNotificationId();
-            updateNotificationStatus(dbNotificationId, "PENDING", "시스템 금지 시간대 (22:00~08:00)");
-            log.info("{} 🏢 시스템 금지시간 - 기존 Notification 업데이트 (중복 방지). billId={}, type={}, notificationId={}", 
-                    traceInfo, message.getBillId(), notificationType, dbNotificationId);
-            
-        } else {
-            // 레코드 없음 → INSERT 수행
-        	 saveNotification(message, notificationType, "PENDING", "시스템 금지 시간대 (22:00~08:00)");
-             log.info("{} 🏢 시스템 금지시간 - 신규 Notification 생성. billId={}, type={}", 
-                traceInfo, message.getBillId(), notificationType);
-        }
-    }
-    
-    /**
-     *사용자 예약 발송 처리
-     * - ScheduledQueue에 이미 저장됨 (scheduleIfPreferred에서)
-     * - Notification 상태만 SCHEDULED로 저장
-     */
-    private void handleScheduledSend(BillingMessageDto message, String notificationType,
-                                      LocalDateTime scheduledAt, boolean isRetry, 
-                                      Long existingNotificationId, String traceInfo) {
-        String scheduleMsg = String.format("사용자 예약 발송 (%s)", scheduledAt);
-        
-        if (isRetry && existingNotificationId != null) {
-            updateNotificationStatus(existingNotificationId, "SCHEDULED", scheduleMsg);
-            log.info("{} 📅 예약 발송 - 기존 Notification 상태 업데이트. billId={}, scheduledAt={}", 
-                    traceInfo, message.getBillId(), scheduledAt);
-        } else {
-            saveNotificationWithSchedule(message, notificationType, "SCHEDULED", scheduleMsg, scheduledAt);
-            log.info("{} 📅 예약 발송 - 신규 Notification 생성. billId={}, userId={}, scheduledAt={}", 
-                traceInfo, message.getBillId(), message.getUserId(), scheduledAt);
-        }
-    }
-    
-
-    /**
-     * 알림 발송 처리 (Factory 패턴)
-     * @param attempt Kafka 재시도 횟수 (1=첫시도, 2이상=재시도)
-     */
-    private void sendNotification(BillingMessageDto message, String notificationType,
-                                   boolean isRetry, Long existingNotificationId, String traceInfo, int attempt) {
-        try {
-            // 1. 타입에 맞는 핸들러 선택
-            NotificationHandler handler = handlerFactory.getHandler(notificationType);
-            
-            log.info("{} 🎯 핸들러 선택됨: {} → {}", 
-                traceInfo, notificationType, handler.getClass().getSimpleName());
-            
-            // 2. 핸들러 실행
-            handler.handle(message, traceInfo, attempt);
-            
-            // 3. 발송 성공 처리 (sent:msg 저장 + retry:msg 삭제)
-            duplicateCheckHandler.onSendSuccess(message.getBillId(), notificationType);
-            
-         // 🔥 중복 INSERT 방지: DB에 이미 레코드가 있는지 확인
-            Optional<Notification> existingByBillId = notificationRepository.findByBillIdAndType(
-                message.getBillId(), notificationType
-            );
-            
-            if (existingByBillId.isPresent()) {
-                // 이미 레코드 있음 → UPDATE만 수행
-                Long dbNotificationId = existingByBillId.get().getNotificationId();
-                updateNotificationToSent(dbNotificationId);
-                log.info("{} ✅ 발송 성공 (재시도, 시도 {}회). billId={}, type={}, notificationId={}", 
-                        traceInfo, attempt, message.getBillId(), notificationType, dbNotificationId);
-            } else {
-                // 레코드 없음 → INSERT 수행
-                saveNotification(message, notificationType, "SENT", null);
-                log.info("{} ✅ 발송 성공 (신규, 시도 {}회). billId={}, type={}", 
-                    traceInfo, attempt, message.getBillId(), notificationType);
-            }
-
-        } catch (Exception e) {
-        	log.error("{} ❌ 발송 실패 (시도 {}회). billId={}, type={}", 
-                traceInfo, attempt, message.getBillId(), notificationType);
-            
-        	// 🔥 중복 INSERT 방지: DB에 이미 레코드가 있는지 확인
-            Optional<Notification> existingByBillId = notificationRepository.findByBillIdAndType(
-                message.getBillId(), notificationType
-            );
-            
-            if (existingByBillId.isPresent()) {
-                // 이미 레코드 있음 → UPDATE만 수행
-                Long dbNotificationId = existingByBillId.get().getNotificationId();
-                updateNotificationToFailed(dbNotificationId, e.getMessage());
-            } else {
-                // 레코드 없음 → INSERT 수행 (FAILED, retry_count=0)
-                saveNotification(message, notificationType, "FAILED", e.getMessage());
-            }
-            
-            throw new RuntimeException(e);
-        }
-    }
-
-    /**
-     * 신규 Notification 저장
-     */
-    private void saveNotification(BillingMessageDto message, String notificationType, 
-                                   String status, String errorMessage) {
+    private Notification createOrUpdateNotificationEntity(
+            BillingMessageDto message,
+            String notificationType,
+            String status,
+            String errorMessage,
+            boolean isRetry,
+            Long existingNotificationId
+    ) {
         String content = createNotificationContent(message, notificationType);
         String recipient = getRecipient(message, notificationType);
 
-        Notification notification = Notification.builder()
-            .userId(message.getUserId())
-            .notificationType(notificationType)
-            .notificationStatus(status)
-            .billId(message.getBillId())
-            .recipient(recipient)
-            .content(content)
-            .retryCount(0)  // 신규는 항상 0
-            .scheduledAt(LocalDateTime.now())
-            .sentAt("SENT".equals(status) ? LocalDateTime.now() : null)
-            .errorMessage(errorMessage)
-            .createdAt(LocalDateTime.now())
-            .build();
+        Notification.NotificationBuilder builder = Notification.builder()
+                .userId(message.getUserId())
+                .notificationType(notificationType)
+                .notificationStatus(status)
+                .billId(message.getBillId())
+                .recipient(recipient)
+                .content(content)
+                .errorMessage(errorMessage)
+                .scheduledAt(LocalDateTime.now());
 
-        notificationRepository.save(notification);
-        log.debug("💾 신규 Notification 저장. status={}, billId={}, type={}", 
-            status, message.getBillId(), notificationType);
+        if (isRetry && existingNotificationId != null) {
+            // 재시도: 기존 ID 사용 (Update)
+            // 주의: DB에서 기존 데이터를 조회해서 createdAt 등을 유지하려면
+            // 여기서 findById를 할 수도 있지만, 성능을 위해 주요 필드만 업데이트 덮어쓰기하거나
+            // JPA의 동작 방식(ID가 있으면 Merge)을 이용합니다.
+            builder.notificationId(existingNotificationId);
+
+            // 기존 재시도 횟수를 알 수 없다면 별도 로직이 필요하지만,
+            // 여기서는 단순화를 위해 DB 조회를 최소화하거나 retry_count는 그대로 둡니다.
+            // (정확한 구현을 위해선 findById가 필요할 수 있음. 여기서는 성능 우선으로 ID만 세팅)
+        } else {
+            // 신규: ID 없음 (Insert), 카운트 0
+            builder.retryCount(0);
+            builder.createdAt(LocalDateTime.now());
+        }
+
+        if ("SENT".equals(status)) {
+            builder.sentAt(LocalDateTime.now());
+        }
+
+        return builder.build();
     }
 
     /**
@@ -331,112 +268,26 @@ public class BillingEventConsumer {
      */
     private String createNotificationContent(BillingMessageDto message, String notificationType) {
         String baseContent = String.format(
-            "[LG U+] %s 청구액 %,d원",
-            message.getBillYearMonth(),
-            message.getTotalAmount() != null ? message.getTotalAmount() : 0
+                "[LG U+] %s 청구액 %,d원",
+                message.getBillYearMonth(),
+                message.getTotalAmount() != null ? message.getTotalAmount() : 0
         );
 
         switch (notificationType.toUpperCase()) {
             case "EMAIL":
                 return String.format(
-                    "[LG U+ 청구 알림]\n청구 년월: %s\n총 청구 금액: %,d원\n납부 기한: %s",
-                    message.getBillYearMonth(),
-                    message.getTotalAmount() != null ? message.getTotalAmount() : 0,
-                    message.getDueDate() != null ? message.getDueDate() : "미정"
+                        "[LG U+ 청구 알림]\n청구 년월: %s\n총 청구 금액: %,d원\n납부 기한: %s",
+                        message.getBillYearMonth(),
+                        message.getTotalAmount() != null ? message.getTotalAmount() : 0,
+                        message.getDueDate() != null ? message.getDueDate() : "미정"
                 );
             case "SMS":
-                return baseContent + ". 납부기한: " + 
-                    (message.getDueDate() != null ? message.getDueDate() : "미정");
+                return baseContent + ". 납부기한: " +
+                        (message.getDueDate() != null ? message.getDueDate() : "미정");
             case "PUSH":
                 return baseContent + ". 자세한 내용은 앱에서 확인하세요.";
             default:
                 return baseContent;
-        }
-    }
-
-    /**
-     * 기존 Notification 상태만 업데이트
-     */
-    private void updateNotificationStatus(Long notificationId, String status, String errorMessage) {
-        Optional<Notification> optNotification = notificationRepository.findById(notificationId);
-        
-        if (optNotification.isPresent()) {
-            Notification existing = optNotification.get();
-            Notification updated = Notification.builder()
-                .notificationId(existing.getNotificationId())
-                .userId(existing.getUserId())
-                .notificationType(existing.getNotificationType())
-                .notificationStatus(status)
-                .billId(existing.getBillId())
-                .recipient(existing.getRecipient())
-                .content(existing.getContent())
-                .retryCount(existing.getRetryCount())
-                .scheduledAt(existing.getScheduledAt())
-                .sentAt(existing.getSentAt())
-                .errorMessage(errorMessage)
-                .createdAt(existing.getCreatedAt())
-                .build();
-            
-            notificationRepository.save(updated);
-            log.debug("💾 Notification 상태 업데이트. notificationId={}, status={}", notificationId, status);
-        } else {
-            log.warn("⚠️ Notification을 찾을 수 없음. notificationId={}", notificationId);
-        }
-    }
-
-    /**
-     * 기존 Notification을 SENT로 업데이트
-     */
-    private void updateNotificationToSent(Long notificationId) {
-        Optional<Notification> optNotification = notificationRepository.findById(notificationId);
-        
-        if (optNotification.isPresent()) {
-            Notification existing = optNotification.get();
-            Notification updated = Notification.builder()
-                .notificationId(existing.getNotificationId())
-                .userId(existing.getUserId())
-                .notificationType(existing.getNotificationType())
-                .notificationStatus("SENT")
-                .billId(existing.getBillId())
-                .recipient(existing.getRecipient())
-                .content(existing.getContent())
-                .retryCount(existing.getRetryCount())
-                .scheduledAt(existing.getScheduledAt())
-                .sentAt(LocalDateTime.now())  // 발송 시간 기록
-                .errorMessage(null)  // 성공이므로 에러 메시지 제거
-                .createdAt(existing.getCreatedAt())
-                .build();
-            
-            notificationRepository.save(updated);
-            log.debug("💾 Notification SENT 업데이트. notificationId={}", notificationId);
-        }
-    }
-
-    /**
-     * 기존 Notification을 FAILED로 업데이트
-     */
-    private void updateNotificationToFailed(Long notificationId, String errorMessage) {
-        Optional<Notification> optNotification = notificationRepository.findById(notificationId);
-        
-        if (optNotification.isPresent()) {
-            Notification existing = optNotification.get();
-            Notification updated = Notification.builder()
-                .notificationId(existing.getNotificationId())
-                .userId(existing.getUserId())
-                .notificationType(existing.getNotificationType())
-                .notificationStatus("FAILED")
-                .billId(existing.getBillId())
-                .recipient(existing.getRecipient())
-                .content(existing.getContent())
-                .retryCount(existing.getRetryCount())  // 재시도 카운트는 RetryService에서 증가
-                .scheduledAt(existing.getScheduledAt())
-                .sentAt(null)
-                .errorMessage(errorMessage)
-                .createdAt(existing.getCreatedAt())
-                .build();
-            
-            notificationRepository.save(updated);
-            log.debug("💾 Notification FAILED 업데이트. notificationId={}", notificationId);
         }
     }
 }

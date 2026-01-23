@@ -1,12 +1,15 @@
 package com.ureca.billing.notification.consumer.handler;
 
+import com.ureca.billing.notification.domain.entity.Notification;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import lombok.Getter;
 import lombok.Builder;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -109,12 +112,12 @@ public class DuplicateCheckHandler {
         Boolean exists = redisTemplate.hasKey(key);
         
         if (Boolean.TRUE.equals(exists)) {
-            log.warn("⚠️ [중복 체크] 이미 발송된 메시지입니다. billId={}, type={}, key={}", 
-                    billId, notificationType, key);
+            //log.warn("⚠️ [중복 체크] 이미 발송된 메시지입니다. billId={}, type={}, key={}",
+            //        billId, notificationType, key);
             return true;
         }
         
-        log.debug("✅ [중복 체크] 신규 메시지입니다. billId={}, type={}", billId, notificationType);
+       // log.debug("✅ [중복 체크] 신규 메시지입니다. billId={}, type={}", billId, notificationType);
         return false;
     }
     
@@ -133,8 +136,8 @@ public class DuplicateCheckHandler {
     public void markAsSent(Long billId, String notificationType) {
         String key = buildSentKey(billId, notificationType);
         redisTemplate.opsForValue().set(key, "sent", SENT_TTL_DAYS, TimeUnit.DAYS);
-        log.info("✅ [발송 완료] Redis에 발송 완료 마킹. billId={}, type={}, key={}, TTL={}days", 
-                billId, notificationType, key, SENT_TTL_DAYS);
+        //log.info("✅ [발송 완료] Redis에 발송 완료 마킹. billId={}, type={}, key={}, TTL={}days",
+                //billId, notificationType, key, SENT_TTL_DAYS);
     }
     
     /**
@@ -156,12 +159,12 @@ public class DuplicateCheckHandler {
         Boolean exists = redisTemplate.hasKey(key);
         
         if (Boolean.TRUE.equals(exists)) {
-            log.info("🔄 [재시도 체크] 재시도 메시지입니다. billId={}, type={}, key={}", 
-                    billId, notificationType, key);
+            //log.info("🔄 [재시도 체크] 재시도 메시지입니다. billId={}, type={}, key={}",
+            //        billId, notificationType, key);
             return true;
         }
         
-        log.debug("📨 [재시도 체크] 신규 메시지입니다. billId={}, type={}", billId, notificationType);
+        //log.debug("📨 [재시도 체크] 신규 메시지입니다. billId={}, type={}", billId, notificationType);
         return false;
     }
     
@@ -175,11 +178,11 @@ public class DuplicateCheckHandler {
         if (value != null) {
             try {
                 Long notificationId = Long.parseLong(value);
-                log.info("🔍 [재시도 조회] 기존 Notification 발견. billId={}, type={}, notificationId={}", 
-                        billId, notificationType, notificationId);
+                //log.info("🔍 [재시도 조회] 기존 Notification 발견. billId={}, type={}, notificationId={}",
+                //        billId, notificationType, notificationId);
                 return notificationId;
             } catch (NumberFormatException e) {
-                log.warn("⚠️ [재시도 조회] notificationId 파싱 실패. billId={}, type={}, value={}", 
+                log.warn("⚠️ [재시도 조회] notificationId 파싱 실패. billId={}, type={}, value={}",
                         billId, notificationType, value);
             }
         }
@@ -198,8 +201,8 @@ public class DuplicateCheckHandler {
                 RETRY_TTL_HOURS, 
                 TimeUnit.HOURS
         );
-        log.info("🔄 [재시도 저장] Redis에 재시도 정보 저장. billId={}, type={}, notificationId={}, TTL={}hour", 
-                billId, notificationType, notificationId, RETRY_TTL_HOURS);
+        //log.info("🔄 [재시도 저장] Redis에 재시도 정보 저장. billId={}, type={}, notificationId={}, TTL={}hour",
+        //        billId, notificationType, notificationId, RETRY_TTL_HOURS);
     }
     
     /**
@@ -217,10 +220,10 @@ public class DuplicateCheckHandler {
         Boolean deleted = redisTemplate.delete(key);
         
         if (Boolean.TRUE.equals(deleted)) {
-            log.info("🗑️ [재시도 삭제] Redis 재시도 키 삭제 완료. billId={}, type={}, key={}", 
-                    billId, notificationType, key);
+            //log.info("🗑️ [재시도 삭제] Redis 재시도 키 삭제 완료. billId={}, type={}, key={}",
+            //        billId, notificationType, key);
         } else {
-            log.debug("📭 [재시도 삭제] 삭제할 재시도 키 없음. billId={}, type={}, key={}", 
+            log.debug("📭 [재시도 삭제] 삭제할 재시도 키 없음. billId={}, type={}, key={}",
                     billId, notificationType, key);
         }
     }
@@ -253,7 +256,7 @@ public class DuplicateCheckHandler {
     public void onSendSuccess(Long billId, String notificationType) {
         markAsSent(billId, notificationType);
         removeRetryKey(billId, notificationType);
-        log.info("✅ [발송 성공 처리 완료] billId={}, type={}", billId, notificationType);
+        //log.info("✅ [발송 성공 처리 완료] billId={}, type={}", billId, notificationType);
     }
     
     /**
@@ -261,5 +264,16 @@ public class DuplicateCheckHandler {
      */
     public void onSendSuccess(Long billId) {
         onSendSuccess(billId, "EMAIL");
+    }
+
+    public void bulkMarkAsSent(List<Notification> notifications) {
+        redisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+            for (Notification n : notifications) {
+                String key = "sent:msg:" + n.getBillId() + ":" + n.getNotificationType();
+                // setEx (key, seconds, value)
+                connection.setEx(key.getBytes(), 7 * 24 * 60 * 60, "true".getBytes());
+            }
+            return null;
+        });
     }
 }

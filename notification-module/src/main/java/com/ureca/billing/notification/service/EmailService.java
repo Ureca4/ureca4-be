@@ -44,12 +44,8 @@ public class EmailService {
      * - 실제 이메일 발송 (설정 시)
      */
     public void sendEmail(BillingMessageDto message) throws Exception {
-        sendEmail(message, 1);  // 기본값: 첫 시도 (deliveryAttempt = 1)
-    }
-    
-    public void sendEmail(BillingMessageDto message, int deliveryAttempt) throws Exception {
-        log.info("📧 [시도 {}회] Sending email to: {} (billId={})", 
-        deliveryAttempt, message.getRecipientEmail(), message.getBillId());
+//        log.info("📧 Sending email to: {} (billId={})",
+//                message.getRecipientEmail(), message.getBillId());
         
         // 1초 지연 (네트워크 지연 시뮬레이션)
         Thread.sleep(1000);
@@ -75,8 +71,8 @@ public class EmailService {
             }
         }
         
-        log.info("[시도 {}회] Email sent successfully. billId={}, amount={}", 
-        		deliveryAttempt, message.getBillId(), message.getTotalAmount());
+        //log.info("✅ Email sent successfully. billId={}, amount={}",
+        //        message.getBillId(), message.getTotalAmount());
     }
     
     /**

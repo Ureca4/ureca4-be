@@ -27,7 +27,7 @@ public class SmsNotificationHandler implements NotificationHandler {
     @Override
     @Transactional
     public void handle(BillingMessageDto message, String traceId) {
-        log.info("{} 📱 SMS 핸들러 처리 시작 - billId={}", traceId, message.getBillId());
+        //log.info("{} 📱 SMS 핸들러 처리 시작 - billId={}", traceId, message.getBillId());
         
         // 1. 중복 체크 (SMS용 키)
         String smsKey = "SMS:" + message.getBillId();
@@ -48,14 +48,14 @@ public class SmsNotificationHandler implements NotificationHandler {
     private void sendSms(BillingMessageDto message, String traceId) {
         try {
             // SMS는 실패 처리 안함 (요구사항)
-            log.info("{} 📱 [SMS 발송 시뮬레이션] to: {}, billId: {}, amount: {}원", 
-                traceId,
-                message.getRecipientPhone(),
-                message.getBillId(),
-                message.getTotalAmount() != null ? String.format("%,d", message.getTotalAmount()) : "0"
-            );
+//            log.info("{} 📱 [SMS 발송 시뮬레이션] to: {}, billId: {}, amount: {}원",
+//                traceId,
+//                message.getRecipientPhone(),
+//                message.getBillId(),
+//                message.getTotalAmount() != null ? String.format("%,d", message.getTotalAmount()) : "0"
+//            );
             
-            log.info("{} ✅ SMS 발송 성공 - billId={}", traceId, message.getBillId());
+            //log.info("{} ✅ SMS 발송 성공 - billId={}", traceId, message.getBillId());
             
         } catch (Exception e) {
             log.error("{} ❌ SMS 발송 실패 - billId={}, error={}", 

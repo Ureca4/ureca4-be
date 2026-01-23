@@ -65,7 +65,11 @@ public class RedisConfig {
     }
     
     @Bean
-    public CacheManager cacheManager(RedisConnectionFactory connectionFactory) {
+    public CacheManager cacheManager(RedisConnectionFactory connectionFactory, ObjectMapper redisObjectMapper) {
+    	
+        GenericJackson2JsonRedisSerializer serializer = 
+                new GenericJackson2JsonRedisSerializer(redisObjectMapper);
+    	
         RedisCacheConfiguration config = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofSeconds(60))
                 .serializeKeysWith(
@@ -74,7 +78,7 @@ public class RedisConfig {
                 )
                 .serializeValuesWith(
                         RedisSerializationContext.SerializationPair
-                                .fromSerializer(new GenericJackson2JsonRedisSerializer())
+                        		.fromSerializer(serializer)
                 );
         
         return RedisCacheManager.builder(connectionFactory)

@@ -86,6 +86,9 @@ public class KafkaConsumerConfig {
         // Thread Pool 설정
         factory.getContainerProperties().setIdleBetweenPolls(100);  // Poll 간격 100ms
         
+        // 재시도 횟수를 Consumer에서 확인할 수 있도록 헤더 활성화
+        factory.getContainerProperties().setDeliveryAttemptHeader(true);
+        
         // ==========================================
         // DLT (Dead Letter Topic) 전략
         // ==========================================

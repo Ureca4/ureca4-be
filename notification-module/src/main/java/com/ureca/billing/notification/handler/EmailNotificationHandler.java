@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
  * Email Notification Handler
  * - 이메일 발송 처리
  * - 중복 체크, 금지 시간대 관리
+ * - 첫 시도 1%, 재시도 30% 실패율 적용
  */
 @Component("emailNotificationHandler")
 @RequiredArgsConstructor
@@ -35,7 +36,16 @@ public class EmailNotificationHandler implements NotificationHandler {
     @Override
     @Transactional
     public void handle(BillingMessageDto message, String traceId) {
-        log.info("{} 📧 EMAIL 핸들러 처리 시작 - billId={}", traceId, message.getBillId());
+    	 handle(message, traceId, 1);  // 기본값: 첫 시도
+    	}
+    /**
+     * 재시도 횟수 포함 처리
+     * - deliveryAttempt에 따라 실패율이 달라짐 (1=1%, 2이상=30%)
+     */
+    @Override
+    @Transactional
+    public void handle(BillingMessageDto message, String traceId, int deliveryAttempt) {
+        log.info("{} 📧 EMAIL 핸들러 처리 시작 - billId={}, 시도 {}회",  traceId, message.getBillId(), deliveryAttempt);
         
         // 1. 중복 체크 (타입 포함)
         if (duplicateCheckHandler.isDuplicate(message.getBillId(), "EMAIL")) {
@@ -60,7 +70,7 @@ public class EmailNotificationHandler implements NotificationHandler {
         }
         
         // 3. 이메일 발송
-        sendEmail(message, traceId);
+        sendEmail(message, traceId, deliveryAttempt);
     }
     
     
@@ -69,17 +79,20 @@ public class EmailNotificationHandler implements NotificationHandler {
         return "EMAIL";
     }
     
-    private void sendEmail(BillingMessageDto message, String traceId) {
+    /**
+     * 이메일 발송 (시도 횟수에 따른 실패율 적용)
+     */
+    private void sendEmail(BillingMessageDto message, String traceId, int deliveryAttempt) {
         try {
             // 발송 시도
-            emailService.sendEmail(message);
+            emailService.sendEmail(message, deliveryAttempt);
             
-            log.info("{} ✅ EMAIL 발송 성공 - billId={}", traceId, message.getBillId());
+            
+            log.info("{} ✅ EMAIL 발송 성공 (시도 {}회) - billId={}", traceId, deliveryAttempt, message.getBillId());
             
         } catch (Exception e) {
-            log.error("{} ❌ EMAIL 발송 실패 - billId={}, error={}", 
-                traceId, message.getBillId(), e.getMessage());
-
+            log.error("{} ❌ EMAIL 발송 실패 (시도 {}회) - billId={}, error={}", 
+                traceId, deliveryAttempt, message.getBillId(), e.getMessage());
             
             // 예외 재발생 → Kafka 재시도 또는 DLT
             throw new RuntimeException("Email send failed", e);

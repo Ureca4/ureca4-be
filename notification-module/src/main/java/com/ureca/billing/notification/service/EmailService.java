@@ -27,23 +27,41 @@ public class EmailService {
     @Value("${notification.email.test-recipient:quokka3306@gmail.com}")
     private String testRecipient;
     
+    @Value("${notification.email.initial-failure-rate:1}")
+    private int initialFailureRate;  // 첫 시도 실패율 (기본 1%)
+    
+    @Value("${notification.email.retry-failure-rate:30}")
+    private int retryFailureRate;    // 재시도 실패율 (기본 30%)
+    
     /**
      * 이메일 발송
      * - 1초 지연
-     * - 1% 확률로 실패
+     * - 첫시도: 1% 확률로 실패
+     * - 재시도: 30% 확률로 실패
+     * 
+     * @param message 발송 메시지
+     * @param deliveryAttempt 시도 횟수 (1=첫시도, 2이상=재시도)
      * - 실제 이메일 발송 (설정 시)
      */
     public void sendEmail(BillingMessageDto message) throws Exception {
-        log.info("📧 Sending email to: {} (billId={})", 
-                message.getRecipientEmail(), message.getBillId());
+        sendEmail(message, 1);  // 기본값: 첫 시도 (deliveryAttempt = 1)
+    }
+    
+    public void sendEmail(BillingMessageDto message, int deliveryAttempt) throws Exception {
+        log.info("📧 [시도 {}회] Sending email to: {} (billId={})", 
+        deliveryAttempt, message.getRecipientEmail(), message.getBillId());
         
         // 1초 지연 (네트워크 지연 시뮬레이션)
         Thread.sleep(1000);
         
-        // 1% 확률로 실패
-        if (random.nextInt(100) < 1) {
-            log.error("❌ Email send failed (1% probability). billId={}", message.getBillId());
-            throw new RuntimeException("Email send failed (SMTP error simulation)");
+        // 시도 횟수에 따른 실패율 적용
+        int failureRate = (deliveryAttempt == 1) ? initialFailureRate : retryFailureRate;
+        if (random.nextInt(100) < failureRate) {
+            log.error("❌ [의도적 실패] 시도 {}회, 실패율 {}%, billId={}",
+            		deliveryAttempt, failureRate, message.getBillId());
+            throw new RuntimeException(String.format(
+                "Email send failed (attempt=%d, failureRate=%d%%, SMTP error simulation)", 
+                deliveryAttempt, failureRate));
         }
         
         // 실제 이메일 발송
@@ -57,8 +75,8 @@ public class EmailService {
             }
         }
         
-        log.info("✅ Email sent successfully. billId={}, amount={}", 
-                message.getBillId(), message.getTotalAmount());
+        log.info("[시도 {}회] Email sent successfully. billId={}, amount={}", 
+        		deliveryAttempt, message.getBillId(), message.getTotalAmount());
     }
     
     /**

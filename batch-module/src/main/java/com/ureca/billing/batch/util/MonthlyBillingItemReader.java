@@ -1,5 +1,7 @@
 package com.ureca.billing.batch.util;
 
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.Map;
 
 import javax.sql.DataSource;
@@ -18,14 +20,18 @@ import lombok.RequiredArgsConstructor;
 @Configuration
 @RequiredArgsConstructor
 public class MonthlyBillingItemReader {
-	
-	private final DataSource dataSource;
-	
-	@Bean
+
+    private final DataSource dataSource;
+
+    @Bean
     @StepScope
     public ItemReader<Long> billingUserReader(
-            @Value("#{jobParameters['billingMonth']}") String billingMonth
+        @Value("#{jobParameters['billingMonth']}") String billingMonth
     ) {
+        YearMonth ym = YearMonth.parse(billingMonth);
+        LocalDate monthStart = ym.atDay(1);
+        LocalDate nextMonthStart = ym.plusMonths(1).atDay(1);
+
         JdbcPagingItemReader<Long> reader = new JdbcPagingItemReader<>();
         reader.setDataSource(dataSource);
         
@@ -36,15 +42,41 @@ public class MonthlyBillingItemReader {
         // 서버 DB에서 에러가 나서 주석처리 합니다.
         // reader.setFetchSize(100); 
         
+        reader.setPageSize(1000);
         reader.setRowMapper((rs, rowNum) -> rs.getLong("user_id"));
 
-        MySqlPagingQueryProvider queryProvider = new MySqlPagingQueryProvider();
-        queryProvider.setSelectClause("user_id");
-        queryProvider.setFromClause("from USERS");
-        queryProvider.setWhereClause("status = 'ACTIVE'");
-        queryProvider.setSortKeys(Map.of("user_id", Order.ASCENDING));
+        MySqlPagingQueryProvider qp = new MySqlPagingQueryProvider();
+        qp.setSelectClause("u.user_id");
+        qp.setFromClause("FROM USERS u");
+        qp.setWhereClause("""
+            (
+                EXISTS (
+                    SELECT 1
+                    FROM USER_PLANS up
+                    WHERE up.user_id = u.user_id
+                      AND up.start_date < :nextMonthStart
+                      AND (up.end_date IS NULL OR up.end_date >= :monthStart)
+                )
+                OR
+                EXISTS (
+                    SELECT 1
+                    FROM USER_ADDONS ua
+                    WHERE ua.user_id = u.user_id
+                      AND ua.start_date < :nextMonthStart
+                      AND (ua.end_date IS NULL OR ua.end_date >= :monthStart)
+                )
+            )
+        """);
 
-        reader.setQueryProvider(queryProvider);
+        qp.setSortKeys(Map.of("u.user_id", Order.ASCENDING));
+
+        reader.setQueryProvider(qp);
+        reader.setParameterValues(Map.of(
+            "monthStart", monthStart,
+            "nextMonthStart", nextMonthStart
+        ));
+
         return reader;
     }
 }
+

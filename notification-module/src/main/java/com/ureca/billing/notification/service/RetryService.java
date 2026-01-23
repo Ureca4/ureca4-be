@@ -7,11 +7,14 @@ import com.ureca.billing.notification.domain.entity.Notification;
 import com.ureca.billing.notification.domain.repository.NotificationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 재시도 서비스
@@ -25,7 +28,7 @@ import java.util.List;
  *    - 처음 로직으로 돌아감
  * 3. retry_count >= 3 인 경우:
  *    - DLQ로 이동 (billing-event.DLT)
- *    - 관리자 처리
+ *     - DeadLetterConsumer에서 SMS Fallback 자동 처리
  */
 @Service
 @RequiredArgsConstructor
@@ -33,12 +36,15 @@ import java.util.List;
 public class RetryService {
     
     private static final String TOPIC = "billing-event";
+    private static final String DLT_TOPIC = "billing-event.DLT";
     private static final int MAX_RETRY_COUNT = 3;
     
     private final NotificationRepository notificationRepository;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
-    private final DuplicateCheckHandler duplicateCheckHandler;  // 추가: Redis 재시도 키 관리
+    private final DuplicateCheckHandler duplicateCheckHandler;  
+    private final JdbcTemplate jdbcTemplate;
+    
     
     /**
      * FAILED 메시지 재시도
@@ -78,12 +84,15 @@ public class RetryService {
             try {
                 // 2. 재시도 횟수 체크
                 if (notification.getRetryCount() >= MAX_RETRY_COUNT) {
-                    // 3회 이상 실패 → DLQ 이동 (실제로는 Kafka ErrorHandler에서 처리됨)
-                    log.warn("💀 [RETRY] 최대 재시도 횟수 초과. DLQ 대상. notificationId={}, retryCount={}", 
+                    // 3회 이상 실패 → DLQ 이동 
+                    log.warn("💀 [RETRY] 최대 재시도 횟수 초과. DLT 대상. notificationId={}, retryCount={}", 
                             notification.getNotificationId(), notification.getRetryCount());
                     
+                    // DLT로 메시지 전송 (SMS Fallback 처리)
+                    sendToDlt(notification);
+                    
                     // 최종 실패 상태로 업데이트
-                    Notification finalFailure = notification.markAsFinalFailure("Max retry count exceeded");
+                    Notification finalFailure = notification.markAsFinalFailure("Max retry count exceeded → DLT");
                     notificationRepository.save(finalFailure);
                     dlqCount++;
                     continue;
@@ -118,37 +127,196 @@ public class RetryService {
                 log.error("❌ [RETRY] 재시도 처리 실패. notificationId={}, error={}", 
                         notification.getNotificationId(), e.getMessage());
                 
-                // 예외 발생 시에도 retry_count가 증가되어 있으므로 
-                // 다음 스케줄러 실행 시 다시 시도됨
             }
         }
         
-        log.info("🎯 [RETRY] 재시도 프로세스 완료. 성공: {}, DLQ: {}, 총 처리: {}", 
+        log.info("🎯 [RETRY] 재시도 프로세스 완료. 성공: {}, DLT전송: {}, 총 처리: {}", 
                 successCount, dlqCount, successCount + dlqCount);
         
         return successCount;
     }
+    
+   /*
+    * 3회 실패 메시지를 DLT로 전송하는 메서드 (SMS Fallback 처리용)
+    * 
+    * 아키텍처:
+    * retry_count >= 3 → DLT 토픽 → DeadLetterConsumer → SMS 자동 발송
+    */
+   private void sendToDlt(Notification notification) {
+       try {
+           // BillingMessageDto 재구성
+           BillingMessageDto message = reconstructMessageForDlt(notification);
+           
+           // DLT 토픽으로 전송
+           String messageJson = objectMapper.writeValueAsString(message);
+           kafkaTemplate.send(DLT_TOPIC, messageJson);
+           
+           log.info("📤 [DLT] DLT 토픽으로 전송 완료. billId={}, notificationId={}", 
+                   notification.getBillId(), notification.getNotificationId());
+           
+       } catch (Exception e) {
+           log.error("❌ [DLT] DLT 전송 실패. notificationId={}, error={}", 
+                   notification.getNotificationId(), e.getMessage());
+       }
+   }
+   
+   /**
+    * DLT용 BillingMessageDto 재구성
+    * SMS 발송에 필요한 정보 포함
+    */
+   private BillingMessageDto reconstructMessageForDlt(Notification notification) {
+	   
+       // 1. bills 테이블에서 청구 정보 조회
+       Map<String, Object> billInfo = getBillInfo(notification.getBillId());
+       
+       // 2. users 테이블에서 전화번호 조회
+       String phoneCipher = getPhoneCipherByUserId(notification.getUserId());
+       
+       return BillingMessageDto.builder()
+           .billId(notification.getBillId())
+           .userId(notification.getUserId())
+           .recipientEmail(notification.getRecipient())  // EMAIL 수신자
+           .recipientPhone(phoneCipher)  // ✅ 실제 전화번호 (암호화된 상태)
+           .totalAmount((Long) billInfo.get("totalAmount"))
+           .billYearMonth((String) billInfo.get("billingMonth"))
+           .billDate((String) billInfo.get("billDate"))
+           .dueDate((String) billInfo.get("dueDate"))
+           .notificationType("EMAIL")  // 원래 타입
+           .build();
+   }
+   
+   /**
+    * userId로 전화번호 조회
+    */
+   private String getPhoneByUserId(Long userId) {
+       // 임시: 마스킹된 전화번호 반환
+       // 실제로는 userRepository.findById(userId).getPhoneCipher() 등으로 조회
+       return "010-1234-5678";
+   }
+
 
     /**
-     * Notification에서 BillingMessageDto 재구성
-     * 
-     * TODO: 실제 구현에서는 BILLS 테이블을 조회하여 정확한 정보를 가져와야 함
-     * 현재는 Notification에 저장된 정보로 최소한의 재구성
+     * Notification에서 BillingMessageDto 재구성 (재시도용)
      */
     private BillingMessageDto reconstructMessage(Notification notification) {
-        // content에서 정보 파싱 시도 (간단한 구현)
-        // 실제로는 bill_id를 저장하고 BILLS 테이블을 조회하는 것이 좋음
+    	
+        // bills 테이블에서 청구 정보 조회
+        Map<String, Object> billInfo = getBillInfo(notification.getBillId());
         
         return BillingMessageDto.builder()
         	.billId(notification.getBillId())  // ✅ notificationId 대신 billId 사용
             .userId(notification.getUserId())
             .recipientEmail(notification.getRecipient())
-            .recipientPhone(null)
-            .totalAmount(50000L)  // 임시 값 (실제로는 DB에서 조회)
-            .billYearMonth("2025-01")
-            .billDate("2025-01-25")
-            .dueDate("2025-02-10")
+            .recipientPhone(null) // EMAIL 재시도에는 전화번호 불필요
+            .totalAmount((Long) billInfo.get("totalAmount"))
+            .billYearMonth((String) billInfo.get("billingMonth"))
+            .billDate((String) billInfo.get("billDate"))
+            .dueDate((String) billInfo.get("dueDate"))
             .build();
+    }
+    
+    /**
+      * ✅ bills 테이블에서 청구 정보 조회
+     */
+    private Map<String, Object> getBillInfo(Long billId) {
+        try {
+            // bill_details에서 총 금액 계산
+            Long totalAmount = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(amount), 0) FROM bill_details WHERE bill_id = ?",
+                Long.class,
+                billId
+            );
+            
+            // bills 테이블에서 날짜 정보 조회
+            Map<String, Object> billData = jdbcTemplate.queryForMap(
+                """
+                SELECT billing_month, 
+                       DATE_FORMAT(bill_issue_date, '%Y-%m-%d') as bill_date,
+                       DATE_FORMAT(DATE_ADD(bill_issue_date, INTERVAL 15 DAY), '%Y-%m-%d') as due_date
+                FROM bills 
+                WHERE bill_id = ?
+                """,
+                billId
+            );
+            
+            return Map.of(
+                "totalAmount", totalAmount != null ? totalAmount : 0L,
+                "billingMonth", billData.get("billing_month") != null ? billData.get("billing_month").toString() : "N/A",
+                "billDate", billData.get("bill_date") != null ? billData.get("bill_date").toString() : "N/A",
+                "dueDate", billData.get("due_date") != null ? billData.get("due_date").toString() : "N/A"
+            );
+            
+        } catch (Exception e) {
+            log.warn("⚠️ [DB] bills 조회 실패. billId={}, error={}", billId, e.getMessage());
+            // 기본값 반환
+            return Map.of(
+                "totalAmount", 0L,
+                "billingMonth", "N/A",
+                "billDate", "N/A",
+                "dueDate", "N/A"
+            );
+        }
+    }
+    
+    /**
+     * ✅ users 테이블에서 전화번호 조회 (암호화된 상태)
+     */
+    private String getPhoneCipherByUserId(Long userId) {
+        try {
+            return jdbcTemplate.queryForObject(
+                "SELECT phone_cipher FROM users WHERE user_id = ?",
+                String.class,
+                userId
+            );
+        } catch (Exception e) {
+            log.warn("⚠️ [DB] users 전화번호 조회 실패. userId={}, error={}", userId, e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 기존 FAILED 메시지 DLT 일괄 전송
+     */
+    @Transactional
+    public int sendExistingFailedToDlt(int limit) {
+        log.info("🚀 [DLT BATCH] 기존 FAILED 메시지 DLT 일괄 전송 시작...");
+        
+        // retry_count >= 3인 FAILED 메시지 조회
+        List<Notification> maxRetryFailedMessages = notificationRepository.findMaxRetryFailedMessages();
+        
+        if (maxRetryFailedMessages == null || maxRetryFailedMessages.isEmpty()) {
+            log.info("📭 [DLT BATCH] DLT 전송 대상 메시지 없음");
+            return 0;
+        }
+        
+        List<Notification> targetMessages = maxRetryFailedMessages.stream()
+            .limit(limit)
+            .toList();
+        
+        log.info("📬 [DLT BATCH] DLT 전송 대상: {}, 전체: {}", 
+                targetMessages.size(), maxRetryFailedMessages.size());
+        
+        int successCount = 0;
+        
+        for (Notification notification : targetMessages) {
+            try {
+                // DLT로 전송
+                sendToDlt(notification);
+                
+                // 상태 업데이트 (DLT 전송됨 표시)
+                Notification updated = notification.markAsFinalFailure("Sent to DLT for SMS Fallback");
+                notificationRepository.save(updated);
+                
+                successCount++;
+                
+            } catch (Exception e) {
+                log.error("❌ [DLT BATCH] DLT 전송 실패. notificationId={}", 
+                        notification.getNotificationId());
+            }
+        }
+        
+        log.info("🎯 [DLT BATCH] DLT 일괄 전송 완료. 성공: {}", successCount);
+        return successCount;
     }
     
     /**

@@ -98,4 +98,78 @@ public interface UserNotificationPrefRepository extends CrudRepository<UserNotif
     @Modifying
     @Query("DELETE FROM user_notification_prefs WHERE user_id = :userId")
     void deleteAllByUserId(@Param("userId") Long userId);
+    
+    
+    /**
+     * 선호 발송 시간 업데이트
+     */
+    @Modifying
+    @Query("""
+        UPDATE user_notification_prefs 
+        SET preferred_day = :day, preferred_hour = :hour, preferred_minute = :minute, updated_at = NOW() 
+        WHERE user_id = :userId AND channel = :channel
+    """)
+    void updatePreferredSchedule(
+            @Param("userId") Long userId,
+            @Param("channel") String channel,
+            @Param("day") Integer day,
+            @Param("hour") Integer hour,
+            @Param("minute") Integer minute
+    );
+    
+    /**
+     * 선호 발송 시간 삭제 (즉시 발송으로 변경)
+     */
+    @Modifying
+    @Query("""
+        UPDATE user_notification_prefs 
+        SET preferred_day = NULL, preferred_hour = NULL, preferred_minute = NULL, updated_at = NOW() 
+        WHERE user_id = :userId AND channel = :channel
+    """)
+    void removePreferredSchedule(
+            @Param("userId") Long userId,
+            @Param("channel") String channel
+    );
+    
+    /**
+     * 선호 발송 시간이 설정된 사용자 목록 조회
+     */
+    @Query("""
+        SELECT * FROM user_notification_prefs 
+        WHERE preferred_day IS NOT NULL AND preferred_hour IS NOT NULL 
+        AND enabled = true
+        ORDER BY user_id, channel
+    """)
+    List<UserNotificationPref> findAllWithPreferredSchedule();
+    
+    /**
+     * 특정 일자에 발송 예정인 사용자 목록 조회
+     * (해당 일에 청구서 발송 예정인 사용자들)
+     */
+    @Query("""
+        SELECT * FROM user_notification_prefs 
+        WHERE preferred_day = :day 
+        AND enabled = true
+        ORDER BY preferred_hour, preferred_minute, user_id
+    """)
+    List<UserNotificationPref> findByPreferredDay(@Param("day") Integer day);
+    
+    /**
+     * 특정 일/시에 발송 예정인 사용자 목록 조회
+     */
+    @Query("""
+        SELECT * FROM user_notification_prefs 
+        WHERE preferred_day = :day AND preferred_hour = :hour
+        AND enabled = true
+        ORDER BY preferred_minute, user_id
+    """)
+    List<UserNotificationPref> findByPreferredDayAndHour(
+            @Param("day") Integer day,
+            @Param("hour") Integer hour
+    );
 }
+
+
+
+
+

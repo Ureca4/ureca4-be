@@ -1,6 +1,7 @@
 package com.ureca.billing.notification.controller;
 
 import com.ureca.billing.notification.domain.dto.QuietTimeCheckResult;
+
 import com.ureca.billing.notification.domain.dto.UserPrefRequest;
 import com.ureca.billing.notification.domain.dto.UserPrefResponse;
 import com.ureca.billing.notification.service.UserQuietTimeService;
@@ -13,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalTime;
+import java.time.YearMonth;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -99,6 +101,11 @@ public class UserPrefController {
                     result.put("quietEnd", response.getQuietEnd());
                     result.put("quietPeriod", response.getQuietPeriod());
                     result.put("hasQuietTime", response.getHasQuietTime());
+                    result.put("preferredDay", response.getPreferredDay());
+                    result.put("preferredHour", response.getPreferredHour());
+                    result.put("preferredMinute", response.getPreferredMinute());
+                    result.put("preferredSchedule", response.getPreferredSchedule());
+                    result.put("hasPreferredSchedule", response.getHasPreferredSchedule());
                     return ResponseEntity.ok(result);
                 })
                 .orElseGet(() -> ResponseEntity.ok(Map.of(
@@ -106,7 +113,9 @@ public class UserPrefController {
                     "channel", channel,
                     "exists", false,
                     "message", "설정이 없습니다. 시스템 기본 정책이 적용됩니다.",
-                    "systemPolicy", "22:00 ~ 08:00 금지"
+                    "systemPolicy", "22:00 ~ 08:00 금지",
+                    "defaultSchedule", "즉시 발송"
+                    
                 )));
     }
     
@@ -183,6 +192,91 @@ public class UserPrefController {
             "enabled", enabled
         ));
     }
+    // ========================================
+    // 선호 발송 시간 API (NEW)
+    // ========================================
+    
+    @Operation(summary = "3-12. 선호 발송 시간 설정", 
+               description = "매월 청구서를 받을 선호 시간 설정 (예: 매월 15일 오전 9시)")
+    @PutMapping("/{userId}/{channel}/schedule")
+    public ResponseEntity<Map<String, Object>> setPreferredSchedule(
+            @PathVariable Long userId,
+            @PathVariable String channel,
+            @Parameter(description = "발송일 (1~28, 매월 몇일)") @RequestParam Integer day,
+            @Parameter(description = "발송 시 (0~23)") @RequestParam Integer hour,
+            @Parameter(description = "발송 분 (0~59, 생략 시 0)") @RequestParam(defaultValue = "0") Integer minute) {
+        
+        log.info("📅 Set preferred schedule. userId={}, channel={}, day={}, hour={}, minute={}", 
+                userId, channel, day, hour, minute);
+        
+        try {
+            UserPrefResponse response = quietTimeService.setPreferredSchedule(userId, channel, day, hour, minute);
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", String.format("✅ 선호 발송 시간이 설정되었습니다: 매월 %d일 %02d:%02d", day, hour, minute),
+                "userId", userId,
+                "channel", channel,
+                "preferredDay", day,
+                "preferredHour", hour,
+                "preferredMinute", minute,
+                "preferredSchedule", response.getPreferredSchedule()
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "error", e.getMessage()
+            ));
+        }
+    }
+    
+    @Operation(summary = "3-13. 선호 발송 시간 제거", 
+               description = "선호 발송 시간 설정을 제거 (즉시 발송으로 변경)")
+    @DeleteMapping("/{userId}/{channel}/schedule")
+    public ResponseEntity<Map<String, Object>> removePreferredSchedule(
+            @PathVariable Long userId,
+            @PathVariable String channel) {
+        
+        quietTimeService.removePreferredSchedule(userId, channel);
+        
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "message", "🗑️ 선호 발송 시간이 제거되었습니다. 청구서가 생성되면 즉시 발송됩니다.",
+            "userId", userId,
+            "channel", channel
+        ));
+    }
+    
+    @Operation(summary = "3-14. 다음 발송 예정 시간 조회", 
+               description = "특정 청구 월에 대한 다음 발송 예정 시간 조회")
+    @GetMapping("/{userId}/{channel}/next-schedule")
+    public ResponseEntity<Map<String, Object>> getNextScheduledTime(
+            @PathVariable Long userId,
+            @PathVariable String channel,
+            @Parameter(description = "청구 월 (YYYY-MM)") @RequestParam(defaultValue = "") String billingMonth) {
+        
+        YearMonth month = billingMonth.isEmpty() 
+                ? YearMonth.now() 
+                : YearMonth.parse(billingMonth);
+        
+        return quietTimeService.getNextScheduledTime(userId, channel, month)
+                .map(scheduledTime -> ResponseEntity.ok(Map.<String, Object>of(
+                    "success", true,
+                    "userId", userId,
+                    "channel", channel,
+                    "billingMonth", month.toString(),
+                    "nextScheduledTime", scheduledTime.toString(),
+                    "hasPreferredSchedule", true
+                )))
+                .orElseGet(() -> ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "userId", userId,
+                    "channel", channel,
+                    "billingMonth", month.toString(),
+                    "hasPreferredSchedule", false,
+                    "message", "선호 발송 시간이 설정되지 않았습니다. 청구서 생성 즉시 발송됩니다."
+                )));
+    }
     
     // ========================================
     // 설정 삭제 API
@@ -225,6 +319,31 @@ public class UserPrefController {
             "EMAIL", quietTimeService.countEnabledUsers("EMAIL"),
             "SMS", quietTimeService.countEnabledUsers("SMS"),
             "PUSH", quietTimeService.countEnabledUsers("PUSH")
+        ));
+    }
+    
+    @Operation(summary = "3-15. 선호 발송 시간 설정된 사용자 목록", 
+               description = "선호 발송 시간이 설정된 모든 사용자 조회")
+    @GetMapping("/admin/with-schedule")
+    public ResponseEntity<Map<String, Object>> getUsersWithPreferredSchedule() {
+        List<UserPrefResponse> users = quietTimeService.getUsersWithPreferredSchedule();
+        
+        return ResponseEntity.ok(Map.of(
+            "count", users.size(),
+            "users", users
+        ));
+    }
+    
+    @Operation(summary = "3-16. 특정 일자 발송 예정 사용자 목록", 
+               description = "특정 일자에 청구서 발송 예정인 사용자 조회")
+    @GetMapping("/admin/by-day/{day}")
+    public ResponseEntity<Map<String, Object>> getUsersByPreferredDay(@PathVariable Integer day) {
+        List<UserPrefResponse> users = quietTimeService.getUsersByPreferredDay(day);
+        
+        return ResponseEntity.ok(Map.of(
+            "day", day,
+            "count", users.size(),
+            "users", users
         ));
     }
 }

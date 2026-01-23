@@ -1,6 +1,7 @@
 package com.ureca.billing.notification.service;
 
 import com.ureca.billing.notification.domain.dto.QuietTimeCheckResult;
+
 import com.ureca.billing.notification.domain.dto.UserPrefRequest;
 import com.ureca.billing.notification.domain.dto.UserPrefResponse;
 import com.ureca.billing.notification.domain.entity.UserNotificationPref;
@@ -14,12 +15,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalTime;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
  * 사용자별 알림 설정 및 금지 시간대 관리 서비스
+ * - 금지 시간대 관리
+ * - 선호 발송 시간 관리
  */
 @Service
 @RequiredArgsConstructor
@@ -41,9 +45,6 @@ public class UserQuietTimeService {
      * 1. 사용자 설정이 있으면 사용자 설정 적용
      * 2. 사용자 설정이 없으면 시스템 정책 적용
      * 
-     * @param userId 사용자 ID
-     * @param channel 채널 (EMAIL, SMS, PUSH)
-     * @return QuietTimeCheckResult 금지 시간 체크 결과
      */
     public QuietTimeCheckResult checkQuietTime(Long userId, String channel) {
         LocalTime now = LocalTime.now();
@@ -154,7 +155,9 @@ public class UserQuietTimeService {
     @Transactional
     @CacheEvict(value = "userPref", key = "#request.userId")
     public UserPrefResponse saveOrUpdatePref(UserPrefRequest request) {
-        log.info("💾 Saving user pref. userId={}, channel={}", request.getUserId(), request.getChannel());
+        log.info("💾 Saving user pref. userId={}, channel={}", 
+        		request.getUserId(), request.getChannel(),
+        		request.getPreferredDay(), request.getPreferredHour(), request.getPreferredMinute());
         
         Optional<UserNotificationPref> existing = prefRepository.findByUserIdAndChannel(
                 request.getUserId(), request.getChannel());
@@ -162,7 +165,6 @@ public class UserQuietTimeService {
         UserNotificationPref pref;
         
         if (existing.isPresent()) {
-            // 기존 설정 업데이트
             UserNotificationPref old = existing.get();
             pref = UserNotificationPref.builder()
                     .prefId(old.getPrefId())
@@ -170,13 +172,15 @@ public class UserQuietTimeService {
                     .channel(old.getChannel())
                     .enabled(request.getEnabled() != null ? request.getEnabled() : old.getEnabled())
                     .priority(request.getPriority() != null ? request.getPriority() : old.getPriority())
-                    .quietStart(request.getQuietStart())
-                    .quietEnd(request.getQuietEnd())
+                    .quietStart(request.getQuietStart() != null ? request.getQuietStart() : old.getQuietStart())
+                    .quietEnd(request.getQuietEnd() != null ? request.getQuietEnd() : old.getQuietEnd())
+                    .preferredDay(request.getPreferredDay() != null ? request.getPreferredDay() : old.getPreferredDay())
+                    .preferredHour(request.getPreferredHour() != null ? request.getPreferredHour() : old.getPreferredHour())
+                    .preferredMinute(request.getPreferredMinute() != null ? request.getPreferredMinute() : old.getPreferredMinute())
                     .createdAt(old.getCreatedAt())
                     .updatedAt(LocalDateTime.now())
                     .build();
         } else {
-            // 신규 생성
             pref = UserNotificationPref.builder()
                     .userId(request.getUserId())
                     .channel(request.getChannel())
@@ -184,13 +188,16 @@ public class UserQuietTimeService {
                     .priority(request.getPriority() != null ? request.getPriority() : 1)
                     .quietStart(request.getQuietStart())
                     .quietEnd(request.getQuietEnd())
+                    .preferredDay(request.getPreferredDay())
+                    .preferredHour(request.getPreferredHour())
+                    .preferredMinute(request.getPreferredMinute())
                     .createdAt(LocalDateTime.now())
                     .updatedAt(LocalDateTime.now())
                     .build();
         }
         
         UserNotificationPref saved = prefRepository.save(pref);
-        log.info("✅ User pref saved. prefId={}", saved.getPrefId());
+        log.info("✅ User pref saved. hasSchedule={}", saved.getPrefId(), saved.hasPreferredSchedule());
         
         return UserPrefResponse.from(saved);
     }
@@ -264,6 +271,97 @@ public class UserQuietTimeService {
         log.info("🗑️ Deleting all prefs for user. userId={}", userId);
         prefRepository.deleteAllByUserId(userId);
     }
+    // ========================================
+    // 선호 발송 시간 관리
+    // ========================================
+    
+    /**
+     * 선호 발송 시간 설정
+     * 
+     * @param userId 사용자 ID
+     * @param channel 채널
+     * @param day 발송일 (1~28)
+     * @param hour 발송 시 (0~23)
+     * @param minute 발송 분 (0~59)
+     */
+    @Transactional
+    @CacheEvict(value = "userPref", key = "#userId")
+    public UserPrefResponse setPreferredSchedule(Long userId, String channel, 
+                                                  Integer day, Integer hour, Integer minute) {
+        log.info("📅 Setting preferred schedule. userId={}, channel={}, day={}, hour={}, minute={}", 
+                userId, channel, day, hour, minute);
+        
+        // 유효성 검사
+        validateSchedule(day, hour, minute);
+        
+        if (!prefRepository.existsByUserIdAndChannel(userId, channel)) {
+            // 설정이 없으면 새로 생성
+            UserPrefRequest request = UserPrefRequest.builder()
+                    .userId(userId)
+                    .channel(channel)
+                    .enabled(true)
+                    .priority(1)
+                    .preferredDay(day)
+                    .preferredHour(hour)
+                    .preferredMinute(minute)
+                    .build();
+            return saveOrUpdatePref(request);
+        }
+        
+        prefRepository.updatePreferredSchedule(userId, channel, day, hour, minute);
+        log.info("✅ Preferred schedule updated.");
+        
+        return getUserPref(userId, channel)
+                .map(UserPrefResponse::from)
+                .orElseThrow(() -> new RuntimeException("Failed to get updated pref"));
+    }
+    
+    /**
+     * 선호 발송 시간 삭제 (즉시 발송으로 변경)
+     */
+    @Transactional
+    @CacheEvict(value = "userPref", key = "#userId")
+    public void removePreferredSchedule(Long userId, String channel) {
+        log.info("🗑️ Removing preferred schedule. userId={}, channel={}", userId, channel);
+        prefRepository.removePreferredSchedule(userId, channel);
+    }
+    
+    /**
+     * 사용자의 선호 발송 시간 조회
+     */
+    public Optional<LocalDateTime> getNextScheduledTime(Long userId, String channel, YearMonth billingMonth) {
+        return getUserPref(userId, channel)
+                .filter(UserNotificationPref::hasPreferredSchedule)
+                .map(pref -> pref.getNextScheduledTime(billingMonth));
+    }
+    
+    /**
+     * 선호 발송 시간 설정 여부 확인
+     */
+    public boolean hasPreferredSchedule(Long userId, String channel) {
+        return getUserPref(userId, channel)
+                .map(UserNotificationPref::hasPreferredSchedule)
+                .orElse(false);
+    }
+    
+    /**
+     * 선호 발송 시간이 설정된 사용자 목록
+     */
+    public List<UserPrefResponse> getUsersWithPreferredSchedule() {
+        return prefRepository.findAllWithPreferredSchedule().stream()
+                .map(UserPrefResponse::from)
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * 특정 일자에 발송 예정인 사용자 목록
+     */
+    public List<UserPrefResponse> getUsersByPreferredDay(Integer day) {
+        return prefRepository.findByPreferredDay(day).stream()
+                .map(UserPrefResponse::from)
+                .collect(Collectors.toList());
+    }
+    
     
     // ========================================
     // 통계/관리용
@@ -283,5 +381,16 @@ public class UserQuietTimeService {
      */
     public long countEnabledUsers(String channel) {
         return prefRepository.countEnabledByChannel(channel);
+    }
+    private void validateSchedule(Integer day, Integer hour, Integer minute) {
+        if (day != null && (day < 1 || day > 28)) {
+            throw new IllegalArgumentException("발송일은 1~28 사이여야 합니다. (28일 이후는 월마다 다르므로 제외)");
+        }
+        if (hour != null && (hour < 0 || hour > 23)) {
+            throw new IllegalArgumentException("발송 시는 0~23 사이여야 합니다.");
+        }
+        if (minute != null && (minute < 0 || minute > 59)) {
+            throw new IllegalArgumentException("발송 분은 0~59 사이여야 합니다.");
+        }
     }
 }

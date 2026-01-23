@@ -25,11 +25,11 @@ public class OutboxMessageRelay {
     @Value("${app.kafka.topics.billing-notification}")
     private String topicName;
 
-    // 0.1초마다 100개씩 '고속' 처리
+    // 0.1초마다 1000개씩 '고속' 처리
     @Scheduled(fixedDelay = 100)
     public void dispatch() {
         // 1. READY 상태인 이벤트 100개 조회
-        String selectSql = "SELECT event_id, payload FROM OUTBOX_EVENTS WHERE status = 'READY' LIMIT 100";
+        String selectSql = "SELECT event_id, payload FROM OUTBOX_EVENTS WHERE status = 'READY' LIMIT 1000";
         List<OutboxEvent> events = jdbcTemplate.query(selectSql, (rs, rowNum) ->
                 new OutboxEvent(rs.getString("event_id"), rs.getString("payload"))
         );

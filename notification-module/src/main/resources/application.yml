@@ -79,4 +79,9 @@ crypto:
 notification:
   email:
     enabled: false  # false로 하면 mocking만
-    test-recipient: dbsrud39840@gmail.com  # 테스트용 수신자
+    test-recipient: 4billforu@gmail.com  # 테스트용 수신자
+    
+   # 실패율 설정 (DLT 테스트용)
+    initial-failure-rate: 1           # 첫 시도 실패율 (기본 1%)
+    retry-failure-rate: 30            # 재시도 실패율 (기본 30%)
+                                      # → DLT 도달률: 약 2.7% (0.01 × 0.30³)

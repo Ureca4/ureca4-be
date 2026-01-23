@@ -1,6 +1,8 @@
 package com.ureca.billing.notification.domain.entity;
 
 import org.springframework.data.annotation.Id;
+
+import java.time.YearMonth;
 import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 import lombok.*;
@@ -13,6 +15,7 @@ import java.time.LocalDateTime;
  * - 채널별 활성화 여부
  * - 우선순위 (1=primary, 2=fallback)
  * - 개인별 금지 시간대 (quiet_start ~ quiet_end)
+ * - 선호 발송 시간 (preferred_day, preferred_hour, preferred_minute)
  */
 @Table("user_notification_prefs")
 @Getter
@@ -42,6 +45,15 @@ public class UserNotificationPref {
     
     @Column("quiet_end")
     private LocalTime quietEnd;    // 금지 종료 시간
+    
+    @Column("preferred_day")
+    private Integer preferredDay;     // 선호 발송일 (1~28, NULL이면 즉시발송)
+    
+    @Column("preferred_hour")
+    private Integer preferredHour;    // 선호 발송 시 (0~23)
+    
+    @Column("preferred_minute")
+    private Integer preferredMinute;  // 선호 발송 분 (0~59)
     
     @Column("created_at")
     private LocalDateTime createdAt;
@@ -76,11 +88,54 @@ public class UserNotificationPref {
         return currentTime.isAfter(quietStart) && currentTime.isBefore(quietEnd);
     }
     
+    // ========================================
+    // 비즈니스 로직 - 선호 발송 시간 
+    // ========================================
+    
     /**
      * 금지 시간대 설정 여부 확인
      */
     public boolean hasQuietTime() {
         return quietStart != null && quietEnd != null;
+    }
+    
+    /**
+     * 선호 발송 시간 설정 여부 확인
+     */
+    public boolean hasPreferredSchedule() {
+        return preferredDay != null && preferredHour != null;
+    }
+    
+    /**
+     * 다음 선호 발송 시간 계산
+     * 
+     * @param baseMonth 기준 월 (청구 월)
+     * @return 다음 발송 예정 시간
+     */
+    public LocalDateTime getNextScheduledTime(YearMonth baseMonth) {
+        if (!hasPreferredSchedule()) {
+            return null;
+        }
+        
+        int minute = preferredMinute != null ? preferredMinute : 0;
+        
+        // 해당 월의 선호일, 선호시간으로 설정
+        // 28일 초과 방지 (2월 등 고려)
+        int day = Math.min(preferredDay, baseMonth.lengthOfMonth());
+        
+        return baseMonth.atDay(day).atTime(preferredHour, minute);
+    }
+    
+    /**
+     * 선호 발송 시간 문자열 반환 (예: "매월 15일 09:00")
+     */
+    public String getPreferredScheduleString() {
+        if (!hasPreferredSchedule()) {
+            return null;
+        }
+        
+        int minute = preferredMinute != null ? preferredMinute : 0;
+        return String.format("매월 %d일 %02d:%02d", preferredDay, preferredHour, minute);
     }
     
     /**

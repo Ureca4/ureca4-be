@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
  * Email Notification Handler
  * - 이메일 발송 처리
  * - 중복 체크, 금지 시간대 관리
+ * - 첫 시도 1%, 재시도 30% 실패율 적용
  */
 @Component("emailNotificationHandler")
 @RequiredArgsConstructor

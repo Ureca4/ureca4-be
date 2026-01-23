@@ -43,13 +43,13 @@ docker compose -f docker-compose.infra.yml -f docker-compose.app.yml down
 
 ### 1) User 및 기초 데이터 생성 (가장 먼저 실행)
 ```powershell
-docker compose -f docker-compose.infra.yml -f docker-compose.app.yml run --rm batch java -jar /app/app.jar --spring.batch.job.name=userDummyDataJob
+docker compose -f docker-compose.infra.yml -f docker-compose.app.yml run --rm core-job java -jar /app/app.jar --spring.batch.job.name=userDummyDataJob
 ```
 
 ### 2) 월별 청구 더미 데이터 생성
 * **필수 파라미터:** `targetYearMonth=yyyy-MM`
 ```powershell
-docker compose -f docker-compose.infra.yml -f docker-compose.app.yml run --rm batch java -jar /app/app.jar --spring.batch.job.name=monthlyDummyDataJob targetYearMonth=2025-08
+docker compose -f docker-compose.infra.yml -f docker-compose.app.yml run --rm core-job java -jar /app/app.jar --spring.batch.job.name=monthlyDummyDataJob targetYearMonth=2025-08
 ```
 
 ---

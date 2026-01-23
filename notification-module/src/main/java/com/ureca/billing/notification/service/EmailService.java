@@ -43,7 +43,7 @@ public class EmailService {
      * @param deliveryAttempt 시도 횟수 (1=첫시도, 2이상=재시도)
      * - 실제 이메일 발송 (설정 시)
      */
-    public void sendEmail(BillingMessageDto message) throws Exception {
+    public void sendEmail(BillingMessageDto message, int deliveryAttempt) throws Exception {
 //        log.info("📧 Sending email to: {} (billId={})",
 //                message.getRecipientEmail(), message.getBillId());
         

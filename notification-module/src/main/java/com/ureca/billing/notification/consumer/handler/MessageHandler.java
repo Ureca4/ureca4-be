@@ -113,7 +113,8 @@ public class MessageHandler{
      */
     private void sendEmail(BillingMessageDto message) {
         try {
-            emailService.sendEmail(message);
+        	// ✅ 첫 시도 (deliveryAttempt = 1, 1% 실패율 적용)
+            emailService.sendEmail(message, 1);
             duplicateCheckHandler.markAsSent(message.getBillId());
             saveNotification(message, "SENT", null, null);
             

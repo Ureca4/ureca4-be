@@ -28,21 +28,35 @@ public class EmailNotificationHandler implements NotificationHandler {
 
     private final EmailService emailService;
 
+    /**
+     * 기본 핸들러 (첫 시도, deliveryAttempt = 1)
+     */
     @Override
     public void handle(BillingMessageDto message, String traceId) {
+        // 기본값: 첫 시도 (1% 실패율)
+        handle(message, traceId, 1);
+    }
+    
+    /**
+     * 재시도 횟수를 포함한 핸들러
+     * - deliveryAttempt = 1: 첫 시도 (1% 실패율)
+     * - deliveryAttempt >= 2: 재시도 (30% 실패율)
+     */
+    @Override
+    public void handle(BillingMessageDto message, String traceId, int deliveryAttempt) {
         // [로그 주석 처리] 성능을 위해 INFO 로그는 끕니다.
-        // log.debug("{} 📧 EMAIL 핸들러 처리 시작 - billId={}", traceId, message.getBillId());
+        // log.debug("{} 📧 EMAIL 핸들러 처리 시작 - billId={}, attempt={}", traceId, message.getBillId(), deliveryAttempt);
 
         try {
-            // 순수 발송 로직만 수행
-            emailService.sendEmail(message);
+            // deliveryAttempt를 전달하여 실패율 차등 적용
+            emailService.sendEmail(message, deliveryAttempt);
 
             // 성공 로그도 Consumer에서 찍거나, Debug로 내림
-            // log.debug("{} EMAIL 발송 성공", traceId);
+            // log.debug("{} EMAIL 발송 성공 (attempt={})", traceId, deliveryAttempt);
 
         } catch (Exception e) {
             // 에러 로그는 남김 (어떤 에러인지 파악용)
-            log.error("{} EMAIL 발송 실패 - error={}", traceId, e.getMessage());
+            log.error("{} EMAIL 발송 실패 - attempt={}, error={}", traceId, deliveryAttempt, e.getMessage());
 
             // 예외를 던져야 Consumer가 이를 잡아서 "FAILED" 상태로 DB에 저장할 수 있음
             throw new RuntimeException("Email send failed", e);

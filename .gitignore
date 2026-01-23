@@ -120,6 +120,8 @@ out/
 .env.development
 .env.production
 
+application-prod.yml
+
 # ====================================
 # Gradle
 # ====================================

@@ -34,7 +34,14 @@ public class MonthlyBillingItemReader {
 
         JdbcPagingItemReader<Long> reader = new JdbcPagingItemReader<>();
         reader.setDataSource(dataSource);
-        reader.setFetchSize(1000);
+        
+        // MySQL Connector/J는 setFetchSize()에 양수 값을 허용하지 않음
+        // 양수 값(예: 100) 설정 시 "Illegal value for setFetchSize()" 에러 발생
+        // 허용 값: 0 또는 Integer.MIN_VALUE만 가능
+        // JdbcPagingItemReader는 페이지 단위로 데이터를 읽으므로 fetchSize 설정이 필수는 아님
+        // 서버 DB에서 에러가 나서 주석처리 합니다.
+        // reader.setFetchSize(100); 
+        
         reader.setPageSize(1000);
         reader.setRowMapper((rs, rowNum) -> rs.getLong("user_id"));
 

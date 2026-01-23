@@ -41,26 +41,26 @@ public class DummyDataJobConfig {
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
     private final DataSource dataSource;
-    
+
     //Users 더미데이터 개수
     @Bean
     @StepScope
     public ItemReader<Long> usersReader() {
-        return new SequenceItemReader(10_000);
+        return new SequenceItemReader(1000000);
     }
     //userAddons 더미데이터 개수
     @Bean
     @StepScope
     public ItemReader<Long> userAddonsReader() {
-        return new SequenceItemReader(20_000);
+        return new SequenceItemReader(2000000);
     }
     //microPayments 더미데이터 개수
     @Bean
     @StepScope
     public ItemReader<Long> microPaymentsUserReader() {
-        return new SequenceItemReader(20_000);
+        return new SequenceItemReader(2000000);
     }
-    
+
     //범용 Step 생성 메서드
     private <I, O> Step createStep(String stepName,
                                    ItemReader<I> reader,
@@ -178,7 +178,7 @@ public class DummyDataJobConfig {
             ps.setTimestamp(5, Timestamp.valueOf(payment.getPaymentDate()));
         });
         writer.afterPropertiesSet();
-    	
+
         return new StepBuilder("microPaymentsDummyStep", jobRepository)
                 .<Long, MicroPayments>chunk(1000, transactionManager)
                 .reader(reader)
@@ -246,7 +246,7 @@ public class DummyDataJobConfig {
     			.build();
     }
     //결제 데이터 관련 더미데이터 생성 job
-    //파라미터 필요 
+    //파라미터 필요
     /*예)
      	--spring.batch.job.name=monthlyDummyDataJob
 		targetYearMonth=2025-08

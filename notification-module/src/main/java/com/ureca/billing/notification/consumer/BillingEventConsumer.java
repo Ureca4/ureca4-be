@@ -135,6 +135,10 @@ public class BillingEventConsumer {
             boolean isRetry = checkResult.isRetry();
             Long existingNotificationId = checkResult.getNotificationId();
 
+            // - 첫 시도: 1 (1% 실패율)
+            // - 재시도: 2 이상 (30% 실패율)
+            int deliveryAttempt = isRetry ? 2 : 1;
+            
             // 금지 시간 체크 (22:00 ~ 08:00)
             if (policyService.isBlockTime()) {
                 // Redis 대기열에 저장
@@ -149,7 +153,7 @@ public class BillingEventConsumer {
             }
             try {
                 NotificationHandler handler = handlerFactory.getHandler(notificationType);
-                handler.handle(message, traceInfo); // 실제 발송 (I/O)
+                handler.handle(message, traceInfo, deliveryAttempt);
 
                 duplicateCheckHandler.onSendSuccess(message.getBillId(), notificationType);
 

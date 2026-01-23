@@ -422,7 +422,8 @@ public class IntegratedTestController {
         try {
             switch (type) {
                 case "EMAIL":
-                    emailService.sendEmail(message);
+                	// 직접 발송은 첫 시도 (deliveryAttempt = 1)
+                    emailService.sendEmail(message, 1);
                     log.info("📧 [이메일 발송] to={}, billId={}", message.getRecipientEmail(), message.getBillId());
                     response.put("recipient", message.getRecipientEmail());
                     break;

@@ -1,5 +1,7 @@
 package com.ureca.billing.batch.config;
 
+import com.ureca.billing.batch.util.MonthlyBillingWriter;
+import com.ureca.billing.batch.util.MonthlyOutboxWriter;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobParametersInvalidException;
 import org.springframework.batch.core.Step;
@@ -22,16 +24,29 @@ public class MonthlyBillingJobConfig {
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
 
+    private final MonthlyBillingWriter monthlyBillingWriter;         // Step 1용
+    private final MonthlyOutboxWriter monthlyOutboxWriter; // Step 2용
+
     //Step
     @Bean
     public Step monthlyBillingStep(
-    		ItemWriter<Long> monthlyBillingWriter,
     		@Qualifier("billingUserReader") ItemReader<Long> monthItemReader
     ){
         return new StepBuilder("monthlyBillingStep", jobRepository)
                 .<Long, Long>chunk(1000, transactionManager)
                 .reader(monthItemReader)
                 .writer(monthlyBillingWriter)
+                .build();
+    }
+
+    @Bean
+    public Step monthlyOutboxStep(
+            @Qualifier("billItemReader") ItemReader<Long> billItemReader
+    ) {
+        return new StepBuilder("monthlyOutboxStep", jobRepository)
+                .<Long, Long>chunk(1000, transactionManager)
+                .reader(billItemReader)
+                .writer(monthlyOutboxWriter) // ✅ 새 Writer 사용 (createOutboxEvents 호출)
                 .build();
     }
 
@@ -43,7 +58,8 @@ public class MonthlyBillingJobConfig {
     @Bean
     public Job monthlyBillingJob(
     		JobRepository jobRepository, 
-    		@Qualifier("monthlyBillingStep") Step monthlyBillingStep
+    		@Qualifier("monthlyBillingStep") Step monthlyBillingStep,
+            @Qualifier("monthlyOutboxStep") Step monthlyOutboxStep
     ) {
         return new JobBuilder("monthlyBillingJob", jobRepository)
         		.validator(parameters -> {
@@ -52,6 +68,7 @@ public class MonthlyBillingJobConfig {
                     }
                 })
                 .start(monthlyBillingStep)
+                .next(monthlyOutboxStep)
                 .build();
     }
 }

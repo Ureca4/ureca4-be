@@ -1,8 +1,8 @@
 package com.ureca.billing.notification.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-
+import com.ureca.billing.notification.service.RedisUserPrefCache;
+import com.ureca.billing.notification.service.RedisUserPrefCache.QuietTimeResult;
 import com.ureca.billing.notification.service.ScheduledQueueService;
 import com.ureca.billing.core.dto.BillingMessageDto;
 import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
@@ -11,12 +11,8 @@ import com.ureca.billing.notification.domain.entity.Notification;
 import com.ureca.billing.notification.domain.repository.NotificationRepository;
 import com.ureca.billing.notification.handler.NotificationHandler;
 import com.ureca.billing.notification.handler.NotificationHandlerFactory;
-import com.ureca.billing.notification.service.EmailService;
-import com.ureca.billing.notification.service.MessagePolicyService;
 import com.ureca.billing.notification.service.WaitingQueueService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.messaging.handler.annotation.Header;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -25,31 +21,18 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.time.LocalTime;
+import java.time.YearMonth;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ForkJoinPool;
 
 /**
- * Kafka 메시지 Consumer (멀티 채널 지원 + 예약 발송)
- * 
- * 아키텍처 플로우:
- * 1. Kafka 메시지 수신 (billing-event-topic)
- * 2. notificationType 확인 (EMAIL, SMS, PUSH)
- * 3. 중복 발송? → Redis 조회 키: sent:msg:{billId}:{type}
- *    - yes → skip
- *    - no → 재시도 메시지인지 확인
- * 4. 재시도 메시지? → Redis key: retry:msg:{billId} 조회
- *    - 재시도일 경우, 기존 Notification 이용
- *    - 새로운 메시지일 경우, 발송 때 Notification 생성
- * 5. 시스템 금지 시간? → WaitingQueue 저장 (다음날 08:00)
- * 6. 사용자 예약 발송 시간? → ScheduledQueue 저장 (사용자 선호 시간)
- * 7. NotificationHandlerFactory로 적절한 핸들러 선택
- *    - EMAIL → EmailNotificationHandler
- *    - SMS → SmsNotificationHandler
- *    - PUSH → PushNotificationHandler
- * 8. 핸들러 실행
- *    - 성공 → status = "SENT", sent:msg:{billId}:{type} 저장
- *    - 실패 → status = "FAILED", retry_count 증가
+ * Kafka 메시지 Consumer (멀티 채널 지원 + Redis 캐싱)
+ *  Redis 캐싱 적용:
+ * 1. 사용자별 금지시간 체크 (Redis 캐시)
+ * 2. 사용자별 예약발송시간 체크 (Redis 캐시)
  */
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -57,11 +40,10 @@ public class BillingEventConsumer {
 
     private final ObjectMapper objectMapper;
     private final DuplicateCheckHandler duplicateCheckHandler;
-    private final MessagePolicyService policyService;
-    private final WaitingQueueService queueService;
+    private final RedisUserPrefCache userPrefCache;
+    private final WaitingQueueService waitingQueueService;
     private final ScheduledQueueService scheduledQueueService;
     private final NotificationHandlerFactory handlerFactory;
-    private final EmailService emailService;
     private final NotificationRepository notificationRepository;
 
     private final ForkJoinPool customThreadPool = new ForkJoinPool(50);
@@ -122,13 +104,17 @@ public class BillingEventConsumer {
         try{
             // Json 파싱
             BillingMessageDto message = objectMapper.readValue(record.value(), BillingMessageDto.class);
-            String notificationType = message.getNotificationType() != null ? message.getNotificationType() : "EMAIL";
+            String channel = message.getNotificationType() != null ? message.getNotificationType().toUpperCase() : "EMAIL";
 
+            log.debug("{} 메시지 처리 시작: billId={}, userId={}, channel={}", 
+                    traceInfo, message.getBillId(), message.getUserId(), channel);
+            
             // 메시지 상태 체크
-            CheckResult checkResult = duplicateCheckHandler.checkMessageStatus(message.getBillId(), notificationType);
+            CheckResult checkResult = duplicateCheckHandler.checkMessageStatus(message.getBillId(), channel);
 
             // 중복이면 null 반환 (저장 안 함)
             if (checkResult.isDuplicate()) {
+            	log.debug("{} 🔄 중복 메시지 스킵: billId={}", traceInfo, message.getBillId());
                 return null;
             }
 
@@ -139,42 +125,86 @@ public class BillingEventConsumer {
             // - 재시도: 2 이상 (30% 실패율)
             int deliveryAttempt = isRetry ? 2 : 1;
             
-            // 금지 시간 체크 (22:00 ~ 08:00)
-            if (policyService.isBlockTime()) {
-                // Redis 대기열에 저장
-                queueService.addToQueue(record.value());
+            LocalTime now = LocalTime.now();
+            QuietTimeResult quietResult = userPrefCache.checkQuietTime(
+                message.getUserId(), 
+                channel, 
+                now
+            );
+
+            if (quietResult.isQuiet) {
+                log.info("{} 🔕 금지시간: userId={}, reason={}, source={}", 
+                    traceInfo, message.getUserId(), quietResult.reason, quietResult.source);
+                // 처리 중 마킹 (중복 방지)
+                duplicateCheckHandler.markAsProcessing(message.getBillId(), channel);
+                waitingQueueService.addToQueue(record.value());
 
                 // PENDING 상태의 Notification 객체 생성/반환
                 return createOrUpdateNotificationEntity(
-                        message, notificationType, "PENDING",
-                        "Added to waiting queue (block time)",
+                        message, channel, "PENDING",
+                        quietResult.getMessage(),
                         isRetry, existingNotificationId
                 );
             }
+            
+            YearMonth billingMonth = parseBillingMonth(message.getBillYearMonth());
+            Optional<LocalDateTime> scheduledTimeOpt = userPrefCache.getScheduledTime(
+                message.getUserId(), 
+                channel, 
+                billingMonth
+            );
+
+            if (scheduledTimeOpt.isPresent()) {
+                LocalDateTime scheduledAt = scheduledTimeOpt.get();
+
+                // 예약 시간이 이미 지났으면 즉시 발송
+                if (scheduledAt.isAfter(LocalDateTime.now())) {
+                    log.info("{} 📅 예약발송: userId={}, billId={}, scheduledAt={}", 
+                        traceInfo, message.getUserId(), message.getBillId(), scheduledAt);
+                 // 처리 중 마킹 (중복 방지)
+                    duplicateCheckHandler.markAsProcessing(message.getBillId(), channel);
+
+                    // ScheduledQueue에 저장
+                    scheduledQueueService.schedule(message, scheduledAt, channel);
+
+                    return createNotificationEntity(
+                        message, channel, "SCHEDULED",
+                        "예약 발송: " + scheduledAt,
+                        isRetry, existingNotificationId,
+                        scheduledAt
+                    );
+                } else {
+                    log.debug("{} ⏰ 예약시간 지남 → 즉시발송: scheduledAt={}", traceInfo, scheduledAt);
+                }
+            }
+            
             try {
-                NotificationHandler handler = handlerFactory.getHandler(notificationType);
+                NotificationHandler handler = handlerFactory.getHandler(channel);
                 handler.handle(message, traceInfo, deliveryAttempt);
 
-                duplicateCheckHandler.onSendSuccess(message.getBillId(), notificationType);
+                duplicateCheckHandler.onSendSuccess(message.getBillId(), channel);
+                
+                //log.info("{} ✅ 발송 성공: billId={}, userId={}, channel={}", 
+                       // traceInfo, message.getBillId(), message.getUserId(), channel);
 
                 // SENT 상태의 Notification 객체 생성/반환
                 return createOrUpdateNotificationEntity(
-                        message, notificationType, "SENT",
+                        message, channel, "SENT",
                         null,
                         isRetry, existingNotificationId
                 );
 
             } catch (Exception e) {
-                log.error("{} 발송 실패: {}", traceInfo, e.getMessage());
+                log.error("{} 발송 실패:billId={}, error={}", traceInfo,  message.getBillId(), e.getMessage());
 
                 // FAILED 상태의 Notification 객체 생성/반환
                 return createOrUpdateNotificationEntity(
-                        message, notificationType, "FAILED",
+                        message, channel, "FAILED",
                         e.getMessage(),
                         isRetry, existingNotificationId
                 );
             }
-        } catch (Exception e){
+        } catch (Exception e) {
             log.error("{} JSON 파싱 또는 로직 에러: {}", traceInfo, e.getMessage());
             return null;
         }
@@ -188,6 +218,26 @@ public class BillingEventConsumer {
             boolean isRetry,
             Long existingNotificationId
     ) {
+    	   return createNotificationEntity(
+    	            message, notificationType, status, errorMessage, 
+    	            isRetry, existingNotificationId, LocalDateTime.now()
+    	        );
+    	    }
+
+    	    /**
+    	     * Notification 엔티티 생성 
+    	     */
+    	    private Notification createNotificationEntity(
+    	            BillingMessageDto message,
+    	            String notificationType,
+    	            String status,
+    	            String errorMessage,
+    	            boolean isRetry,
+    	            Long existingNotificationId,
+    	            LocalDateTime scheduledAt
+    	    ) {
+    	    	
+    	    	
         String content = createNotificationContent(message, notificationType);
         String recipient = getRecipient(message, notificationType);
 
@@ -199,7 +249,7 @@ public class BillingEventConsumer {
                 .recipient(recipient)
                 .content(content)
                 .errorMessage(errorMessage)
-                .scheduledAt(LocalDateTime.now());
+                .scheduledAt(scheduledAt);
 
         if (isRetry && existingNotificationId != null) {
             // 재시도: 기존 ID 사용 (Update)
@@ -225,30 +275,20 @@ public class BillingEventConsumer {
     }
 
     /**
-     * 예약 시간 포함 Notification 저장
+     * 청구 월 파싱 (예: "202501" → 2025-01)
      */
-    private void saveNotificationWithSchedule(BillingMessageDto message, String notificationType, 
-                                               String status, String errorMessage, LocalDateTime scheduledAt) {
-        String content = createNotificationContent(message, notificationType);
-        String recipient = getRecipient(message, notificationType);
+    private YearMonth parseBillingMonth(String billYearMonth) {
+        if (billYearMonth == null || billYearMonth.length() < 6) {
+            return YearMonth.now();
+        }
+        try {
+            int year = Integer.parseInt(billYearMonth.substring(0, 4));
+            int month = Integer.parseInt(billYearMonth.substring(4, 6));
+            return YearMonth.of(year, month);
+        } catch (Exception e) {
+            return YearMonth.now();
+        }
 
-        Notification notification = Notification.builder()
-            .userId(message.getUserId())
-            .notificationType(notificationType)
-            .notificationStatus(status)
-            .billId(message.getBillId())
-            .recipient(recipient)
-            .content(content)
-            .retryCount(0)
-            .scheduledAt(scheduledAt)  // 🆕 예약 시간 저장
-            .sentAt(null)
-            .errorMessage(errorMessage)
-            .createdAt(LocalDateTime.now())
-            .build();
-
-        notificationRepository.save(notification);
-        log.debug("💾 예약 Notification 저장. status={}, billId={}, scheduledAt={}", 
-            status, message.getBillId(), scheduledAt);
     }
     
     /**

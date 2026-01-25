@@ -43,7 +43,7 @@ public class ScheduledQueueScheduler {
         log.debug("📅 [SCHEDULED] Checking for ready messages...");
 
         // 🔍 디버깅 추가
-        scheduledQueueService.debugPrintQueue("ALL");
+        //scheduledQueueService.debugPrintQueue("ALL");
 
         // 1. 금지 시간대 체크
         if (policyService.isBlockTime()) {

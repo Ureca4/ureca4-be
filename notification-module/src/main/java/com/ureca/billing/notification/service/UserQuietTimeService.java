@@ -33,6 +33,7 @@ public class UserQuietTimeService {
     
     private final UserNotificationPrefRepository prefRepository;
     private final MessagePolicyService systemPolicyService;  // 시스템 정책
+    private final RedisUserPrefCache redisUserPrefCache;
     
     // ========================================
     // 금지 시간 체크 (핵심 로직)
@@ -52,7 +53,7 @@ public class UserQuietTimeService {
     }
     
     /**
-     * 특정 시간에 대한 금지 시간 체크 (테스트용)
+     * 특정 시간에 대한 금지 시간 체크 
      */
     public QuietTimeCheckResult checkQuietTime(Long userId, String channel, LocalTime checkTime) {
         log.debug("🔍 Checking quiet time. userId={}, channel={}, time={}", userId, channel, checkTime);
@@ -155,9 +156,9 @@ public class UserQuietTimeService {
     @Transactional
     @CacheEvict(value = "userPref", key = "#request.userId")
     public UserPrefResponse saveOrUpdatePref(UserPrefRequest request) {
-        log.info("💾 Saving user pref. userId={}, channel={}", 
+    	log.info("💾 Saving user pref. userId={}, channel={}, preferredDay={}, preferredHour={}", 
         		request.getUserId(), request.getChannel(),
-        		request.getPreferredDay(), request.getPreferredHour(), request.getPreferredMinute());
+        		request.getPreferredDay(), request.getPreferredHour());
         
         Optional<UserNotificationPref> existing = prefRepository.findByUserIdAndChannel(
                 request.getUserId(), request.getChannel());
@@ -197,7 +198,8 @@ public class UserQuietTimeService {
         }
         
         UserNotificationPref saved = prefRepository.save(pref);
-        log.info("✅ User pref saved. hasSchedule={}", saved.getPrefId(), saved.hasPreferredSchedule());
+        redisUserPrefCache.evictUserPref(request.getUserId(), request.getChannel());
+        log.info("✅ User pref saved. prefId={}, hasSchedule={}", saved.getPrefId(), saved.hasPreferredSchedule());
         
         return UserPrefResponse.from(saved);
     }
@@ -226,6 +228,9 @@ public class UserQuietTimeService {
         }
         
         prefRepository.updateQuietTime(userId, channel, quietStart, quietEnd);
+        
+        redisUserPrefCache.evictUserPref(userId, channel);
+        
         log.info("✅ Quiet time updated.");
     }
     
@@ -249,6 +254,7 @@ public class UserQuietTimeService {
         }
         
         prefRepository.updateEnabled(userId, channel, enabled);
+        redisUserPrefCache.evictUserPref(userId, channel);
         log.info("✅ Channel toggled.");
     }
     
@@ -260,6 +266,8 @@ public class UserQuietTimeService {
     public void removeQuietTime(Long userId, String channel) {
         log.info("🗑️ Removing quiet time. userId={}, channel={}", userId, channel);
         prefRepository.updateQuietTime(userId, channel, null, null);
+        
+        redisUserPrefCache.evictUserPref(userId, channel);
     }
     
     /**
@@ -270,6 +278,8 @@ public class UserQuietTimeService {
     public void deleteUserPrefs(Long userId) {
         log.info("🗑️ Deleting all prefs for user. userId={}", userId);
         prefRepository.deleteAllByUserId(userId);
+        
+        redisUserPrefCache.evictAllUserPref(userId);
     }
     // ========================================
     // 선호 발송 시간 관리
@@ -309,6 +319,7 @@ public class UserQuietTimeService {
         }
         
         prefRepository.updatePreferredSchedule(userId, channel, day, hour, minute);
+        redisUserPrefCache.evictUserPref(userId, channel);
         log.info("✅ Preferred schedule updated.");
         
         return getUserPref(userId, channel)
@@ -324,6 +335,8 @@ public class UserQuietTimeService {
     public void removePreferredSchedule(Long userId, String channel) {
         log.info("🗑️ Removing preferred schedule. userId={}, channel={}", userId, channel);
         prefRepository.removePreferredSchedule(userId, channel);
+        
+        redisUserPrefCache.evictUserPref(userId, channel);
     }
     
     /**

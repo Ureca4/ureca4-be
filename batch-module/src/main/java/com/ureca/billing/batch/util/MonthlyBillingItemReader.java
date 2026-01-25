@@ -78,5 +78,27 @@ public class MonthlyBillingItemReader {
 
         return reader;
     }
+
+    @Bean
+    @StepScope
+    public ItemReader<Long> billItemReader(
+            @Value("#{jobParameters['billingMonth']}") String billingMonth
+    ) {
+        JdbcPagingItemReader<Long> reader = new JdbcPagingItemReader<>();
+        reader.setDataSource(dataSource);
+        reader.setPageSize(1000);
+        reader.setRowMapper((rs, rowNum) -> rs.getLong("bill_id")); // bill_id를 읽어옴
+
+        MySqlPagingQueryProvider qp = new MySqlPagingQueryProvider();
+        qp.setSelectClause("bill_id");
+        qp.setFromClause("FROM BILLS");
+        qp.setWhereClause("WHERE billing_month = :billingMonth");
+        qp.setSortKeys(Map.of("bill_id", Order.ASCENDING));
+
+        reader.setQueryProvider(qp);
+        reader.setParameterValues(Map.of("billingMonth", billingMonth));
+
+        return reader;
+    }
 }
 

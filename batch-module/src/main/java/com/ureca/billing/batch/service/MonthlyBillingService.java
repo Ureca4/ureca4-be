@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
@@ -33,7 +34,7 @@ public class MonthlyBillingService {
 
 
     @Transactional
-    public void process(List<Long> userIds, YearMonth billingMonth) {
+    public void createBills(List<Long> userIds, YearMonth billingMonth) {
 
         if (userIds == null || userIds.isEmpty()) return;
 
@@ -198,102 +199,139 @@ public class MonthlyBillingService {
             (bill_id, detail_type, charge_category, amount, related_user_id)
             VALUES (?, ?, ?, ?, ?)
         """, rows);
+    }
 
-        /* =========================
-         * 5️⃣ OUTBOX_EVENTS 생성 (Transactional Outbox)
-         *     - user별 enabled 채널 모두 생성
-         *     - OUTBOX는 READY로만 쌓고 끝(Producer가 가져감)
-         * ========================= */
+    /**
+     * [Step 2] 알림 이벤트 생성 (Outbox Events)
+     * - Step 1에서 생성된 billId 목록을 받아서 실행됨
+     * - 별도의 트랜잭션으로 실행됨
+     */
+    @Transactional
+    public void createOutboxEvents(List<Long> billIds) {
+        if (billIds == null || billIds.isEmpty()) return;
 
-        // 5-1) prefs 조회: (EMAIL/SMS만) enabled=1
+        Map<String, Object> params = Map.of("billIds", billIds);
+        DateTimeFormatter ymdFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+        // 1. 필요한 데이터 다시 조회 (트랜잭션이 분리되었으므로 DB에서 가져와야 함)
+
+        // 1-1) User 정보 및 Bill 기본 정보 조회
+        List<BillInfo> billInfos = new ArrayList<>();
+        namedJdbc.query("""
+            SELECT b.bill_id, b.user_id, b.billing_month,
+                   u.email_cipher, u.phone_cipher, u.name
+            FROM BILLS b
+            JOIN USERS u ON u.user_id = b.user_id
+            WHERE b.bill_id IN (:billIds)
+        """, params, (RowCallbackHandler) rs -> {
+            billInfos.add(BillInfo.builder()
+                    .billId(rs.getLong("bill_id"))
+                    .userId(rs.getLong("user_id"))
+                    .billingMonth(rs.getString("billing_month"))
+                    .emailCipher(rs.getString("email_cipher"))
+                    .phoneCipher(rs.getString("phone_cipher"))
+                    .name(rs.getString("name"))
+                    .build());
+        });
+
+        Set<Long> userIds = billInfos.stream().map(BillInfo::getUserId).collect(Collectors.toSet());
+        Map<String, Object> userParams = Map.of("userIds", userIds);
+
+        // 1-2) 총 요금 합계 계산 (DETAILS 테이블 Group By)
+        // Step 1에서 계산했지만 메모리에 없으므로 다시 계산하는 것이 안전함
+        Map<Long, Long> totalAmountByBillId = new HashMap<>();
+        namedJdbc.query("""
+            SELECT bill_id, SUM(amount) as total_amt
+            FROM BILL_DETAILS
+            WHERE bill_id IN (:billIds)
+            GROUP BY bill_id
+        """, params, (RowCallbackHandler) rs -> {
+            totalAmountByBillId.put(rs.getLong("bill_id"), rs.getLong("total_amt"));
+        });
+
+        // 1-3) Plan 이름 조회 (알림용) - BILL_DETAILS나 USER_PLANS 조인 필요
+        // 단순화를 위해 생략하거나 필요시 추가 조회
+
+        // 1-4) 알림 채널 조회
         Map<Long, Set<String>> channelsByUser = new HashMap<>();
         namedJdbc.query("""
             SELECT user_id, channel
             FROM USER_NOTIFICATION_PREFS
             WHERE enabled = 1
               AND user_id IN (:userIds)
-              AND channel IN ('EMAIL','SMS','PUSH')   -- OUTBOX enum이 EMAIL/SMS만이라 일단 제한
-        """, Map.of("userIds", userIds), (RowCallbackHandler) rs -> {
-            long uid = rs.getLong("user_id");
-            String channel = rs.getString("channel");
-            channelsByUser.computeIfAbsent(uid, k -> new HashSet<>()).add(channel);
+              AND channel IN ('EMAIL','SMS','PUSH')
+        """, userParams, (RowCallbackHandler) rs -> {
+            channelsByUser.computeIfAbsent(rs.getLong("user_id"), k -> new HashSet<>())
+                    .add(rs.getString("channel"));
         });
 
-        // 5-2) outbox row 생성
+        // 2. Outbox 데이터 생성
         List<Object[]> outboxRows = new ArrayList<>();
         String eventType = "BILLING_NOTIFY";
 
-        for (Long uid : userIds) {
-            Long billId = billIdByUser.get(uid);
-            if (billId == null) continue;
-
-            Set<String> channels = channelsByUser.getOrDefault(uid, Set.of());
+        for (BillInfo info : billInfos) {
+            Set<String> channels = channelsByUser.getOrDefault(info.getUserId(), Set.of());
             if (channels.isEmpty()) continue;
 
-            UserContactInfo contact = userContacts.get(uid);
-            if (contact == null) continue;
-
-            // 요금 합계 계산 (DTO 생성을 위해 다시 계산)
-            long planFee = planFees.getOrDefault(uid, 0L);
-            long addonTotal = addonFees.getOrDefault(uid, List.of()).stream().mapToLong(Long::longValue).sum();
-            long microTotal = microPayments.getOrDefault(uid, List.of()).stream().mapToLong(Long::longValue).sum();
-            long totalAmount = planFee + addonTotal + microTotal;
+            long totalAmount = totalAmountByBillId.getOrDefault(info.getBillId(), 0L);
 
             for (String ch : channels) {
                 String eventId = UUID.randomUUID().toString();
-
                 try {
-                    // 1. DTO 생성 (모든 정보 포함)
                     BillingMessageDto messageDto = BillingMessageDto.builder()
-                            .billId(billId)
-                            .userId(uid)
-                            .billYearMonth(billingMonth.toString().replace("-", ""))
+                            .billId(info.getBillId())
+                            .userId(info.getUserId())
+                            .billYearMonth(info.getBillingMonth().replace("-", ""))
                             .billDate(LocalDate.now().format(ymdFormatter))
                             .dueDate(LocalDate.now().plusDays(15).format(ymdFormatter))
                             .timestamp(LocalDateTime.now().toString())
-                            .recipientEmail(contact.getEmailCipher())
-                            .recipientPhone(contact.getPhoneCipher())
-                            .name(contact.getName())
+                            .recipientEmail(info.getEmailCipher())
+                            .recipientPhone(info.getPhoneCipher())
+                            .name(info.getName())
                             .totalAmount(totalAmount)
-                            .planName(planNames.getOrDefault(uid, "기본 요금제"))
+                            .planName("청구서 참조") // 상세 로직 필요시 추가 구현
                             .notificationType(ch)
                             .build();
 
-                    // 2. JSON 변환 (Fat Payload)
                     String payload = objectMapper.writeValueAsString(messageDto);
 
                     outboxRows.add(new Object[]{
-                            eventId,
-                            billId,
-                            uid,
-                            eventType,
-                            ch,          // OUTBOX_EVENTS.notification_type
-                            payload      // Full JSON Data
+                            eventId, info.getBillId(), info.getUserId(),
+                            eventType, ch, payload
                     });
 
                 } catch (JsonProcessingException e) {
-                    log.error("JSON 변환 실패: userId={}", uid, e);
+                    log.error("JSON 변환 실패: billId={}", info.getBillId(), e);
                 }
             }
         }
 
-        // 5-3) DB 저장 (Batch Insert)
+        // 3. DB 저장
         jdbcTemplate.batchUpdate("""
             INSERT INTO OUTBOX_EVENTS
-              (event_id, bill_id, user_id, event_type, notification_type, payload, status, attempt_count, next_retry_at, last_error)
+              (event_id, bill_id, user_id, event_type, notification_type, payload, status, attempt_count)
             VALUES
-              (?, ?, ?, ?, ?, CAST(? AS JSON), 'READY', 0, NULL, NULL)
-            ON DUPLICATE KEY UPDATE
-              payload = VALUES(payload),
-              status = 'READY',
-              next_retry_at = NULL,
-              last_error = NULL,
-              updated_at = CURRENT_TIMESTAMP
+              (?, ?, ?, ?, ?, CAST(? AS JSON), 'READY', 0)
+            ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP
         """, outboxRows);
     }
+
+
+
     @Getter
     @Builder
     private static class UserContactInfo {
+        private String emailCipher;
+        private String phoneCipher;
+        private String name;
+    }
+
+    @Getter
+    @Builder
+    private static class BillInfo {
+        private Long billId;
+        private Long userId;
+        private String billingMonth;
         private String emailCipher;
         private String phoneCipher;
         private String name;

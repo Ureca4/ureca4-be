@@ -9,6 +9,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import com.ureca.billing.core.security.crypto.AesUtil;
+import com.ureca.billing.core.security.crypto.CryptoKeyProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -31,6 +33,7 @@ public class MonthlyBillingService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
 
+    private final CryptoKeyProvider keyProvider;
 
 
     @Transactional
@@ -94,8 +97,8 @@ public class MonthlyBillingService {
         """, params, (RowCallbackHandler) rs -> {
             long uid = rs.getLong("user_id");
             addonFees
-                .computeIfAbsent(uid, k -> new ArrayList<>())
-                .add(rs.getLong("monthly_fee"));
+                    .computeIfAbsent(uid, k -> new ArrayList<>())
+                    .add(rs.getLong("monthly_fee"));
         });
 
         Map<Long, List<Long>> microPayments = new HashMap<>();
@@ -108,8 +111,8 @@ public class MonthlyBillingService {
         """, params, (RowCallbackHandler) rs -> {
             long uid = rs.getLong("user_id");
             microPayments
-                .computeIfAbsent(uid, k -> new ArrayList<>())
-                .add(rs.getLong("amount"));
+                    .computeIfAbsent(uid, k -> new ArrayList<>())
+                    .add(rs.getLong("amount"));
         });
 
         /* =========================
@@ -144,8 +147,8 @@ public class MonthlyBillingService {
                 "userIds", userIds
         ), (RowCallbackHandler) rs -> {
             billIdByUser.put(
-                rs.getLong("user_id"),
-                rs.getLong("bill_id")
+                    rs.getLong("user_id"),
+                    rs.getLong("bill_id")
             );
         });
 
@@ -163,33 +166,33 @@ public class MonthlyBillingService {
             Long planFee = planFees.get(uid);
             if (planFee != null) {
                 rows.add(new Object[]{
-                    billId,
-                    "PLAN",
-                    "BASE_FEE",
-                    planFee,
-                    uid
+                        billId,
+                        "PLAN",
+                        "BASE_FEE",
+                        planFee,
+                        uid
                 });
             }
 
             // ADDON
             for (Long fee : addonFees.getOrDefault(uid, List.of())) {
                 rows.add(new Object[]{
-                    billId,
-                    "ADDON",
-                    "ADDON_FEE",
-                    fee,
-                    uid
+                        billId,
+                        "ADDON",
+                        "ADDON_FEE",
+                        fee,
+                        uid
                 });
             }
 
             // MICRO_PAYMENT
             for (Long amt : microPayments.getOrDefault(uid, List.of())) {
                 rows.add(new Object[]{
-                    billId,
-                    "MICRO_PAYMENT",
-                    "MICRO_PAYMENT",
-                    amt,
-                    uid
+                        billId,
+                        "MICRO_PAYMENT",
+                        "MICRO_PAYMENT",
+                        amt,
+                        uid
                 });
             }
         }
@@ -295,9 +298,11 @@ public class MonthlyBillingService {
 
                     String payload = objectMapper.writeValueAsString(messageDto);
 
+                    String encryptedPayload = AesUtil.encrypt(payload, keyProvider.getCurrentKey());
+
                     outboxRows.add(new Object[]{
                             eventId, info.getBillId(), info.getUserId(),
-                            eventType, ch, payload
+                            eventType, ch, encryptedPayload
                     });
 
                 } catch (JsonProcessingException e) {
@@ -311,7 +316,7 @@ public class MonthlyBillingService {
             INSERT INTO OUTBOX_EVENTS
               (event_id, bill_id, user_id, event_type, notification_type, payload, status, attempt_count)
             VALUES
-              (?, ?, ?, ?, ?, CAST(? AS JSON), 'READY', 0)
+              (?, ?, ?, ?, ?, ?, 'READY', 0)
             ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP
         """, outboxRows);
     }

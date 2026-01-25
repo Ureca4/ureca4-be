@@ -45,7 +45,7 @@ spring:
 
   batch:
     job:
-      enabled: true
+      enabled: false
     jdbc:
       initialize-schema: always
 
@@ -60,7 +60,7 @@ app:
     topics:
       billing-notification: billing-event
     topic-creation:
-      enabled: true
+      enabled: false
 
 server:
   port: 8081

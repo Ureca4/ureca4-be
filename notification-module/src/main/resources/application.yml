@@ -58,7 +58,7 @@ spring:
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
     topic-creation:
-      enabled: true
+      enabled: false
 
     # [중요] listener는 consumer 밖으로 나와야 합니다!
     listener:

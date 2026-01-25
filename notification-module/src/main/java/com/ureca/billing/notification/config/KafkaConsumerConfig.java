@@ -1,6 +1,8 @@
 package com.ureca.billing.notification.config;
 
-import lombok.extern.slf4j.Slf4j;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -16,8 +18,7 @@ import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.util.backoff.FixedBackOff;
 
-import java.util.HashMap;
-import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Kafka Consumer 설정
@@ -103,7 +104,7 @@ public class KafkaConsumerConfig {
                 
                 // billing-event.DLT로 전송
                 return new org.apache.kafka.common.TopicPartition(
-                    record.topic() + ".DLT", 
+                    record.topic() + "-dlt", 
                     record.partition()
                 );
             }

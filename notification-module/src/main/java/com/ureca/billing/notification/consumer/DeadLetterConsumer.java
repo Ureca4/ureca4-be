@@ -1,21 +1,23 @@
 package com.ureca.billing.notification.consumer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ureca.billing.core.dto.BillingMessageDto;
-import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
-import com.ureca.billing.notification.domain.entity.Notification;
-import com.ureca.billing.notification.domain.repository.NotificationRepository;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ureca.billing.core.dto.BillingMessageDto;
+import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
+import com.ureca.billing.notification.domain.entity.Notification;
+import com.ureca.billing.notification.domain.repository.NotificationRepository;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Dead Letter Topic Consumer
@@ -39,7 +41,7 @@ public class DeadLetterConsumer {
      * - 각 메시지마다 SMS 폴백 수행
      */
     @KafkaListener(
-        topics = "billing-event.DLT",
+        topics = "billing-event-dlt",
         groupId = "dlq-group",
         concurrency = "3",
         containerFactory = "kafkaListenerContainerFactory"

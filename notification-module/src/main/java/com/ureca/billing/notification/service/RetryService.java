@@ -1,12 +1,9 @@
 package com.ureca.billing.notification.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ureca.billing.core.dto.BillingMessageDto;
-import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
-import com.ureca.billing.notification.domain.entity.Notification;
-import com.ureca.billing.notification.domain.repository.NotificationRepository;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -15,10 +12,14 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ureca.billing.core.dto.BillingMessageDto;
+import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
+import com.ureca.billing.notification.domain.entity.Notification;
+import com.ureca.billing.notification.domain.repository.NotificationRepository;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 재시도 서비스
@@ -31,7 +32,7 @@ import java.util.Map;
  *    - Kafka로 재발행 (billing-event-topic)
  *    - 처음 로직으로 돌아감
  * 3. retry_count >= 3 인 경우:
- *    - DLQ로 이동 (billing-event.DLT)
+ *    - DLQ로 이동 (billing-event-dlt)
  *     - DeadLetterConsumer에서 SMS Fallback 자동 처리
  */
 @Service
@@ -40,7 +41,7 @@ import java.util.Map;
 public class RetryService {
 
     private static final String TOPIC = "billing-event";
-    private static final String DLT_TOPIC = "billing-event.DLT";
+    private static final String DLT_TOPIC = "billing-event-dlt";
     private static final int MAX_RETRY_COUNT = 3;
 
     private final NotificationRepository notificationRepository;

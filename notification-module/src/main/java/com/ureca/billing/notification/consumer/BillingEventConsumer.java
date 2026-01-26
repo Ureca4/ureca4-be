@@ -5,6 +5,8 @@ import com.ureca.billing.notification.service.RedisUserPrefCache;
 import com.ureca.billing.notification.service.RedisUserPrefCache.QuietTimeResult;
 import com.ureca.billing.notification.service.ScheduledQueueService;
 import com.ureca.billing.core.dto.BillingMessageDto;
+import com.ureca.billing.core.security.crypto.AesUtil;
+import com.ureca.billing.core.security.crypto.CryptoKeyProvider;
 import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
 import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler.CheckResult;
 import com.ureca.billing.notification.domain.entity.Notification;
@@ -45,6 +47,7 @@ public class BillingEventConsumer {
     private final ScheduledQueueService scheduledQueueService;
     private final NotificationHandlerFactory handlerFactory;
     private final NotificationRepository notificationRepository;
+    private final CryptoKeyProvider keyProvider;
 
     private final ForkJoinPool customThreadPool = new ForkJoinPool(50);
 
@@ -52,7 +55,7 @@ public class BillingEventConsumer {
             topics = "billing-event",
             groupId = "notification-group",
             containerFactory = "kafkaListenerContainerFactory",
-            concurrency = "20" // 파티션 개수에 맞춰 설정
+            concurrency = "50" // 파티션 개수에 맞춰 설정
     )
     public void consume(List<ConsumerRecord<String, String>> records, Acknowledgment ack) {
         long startTime = System.currentTimeMillis();
@@ -102,8 +105,19 @@ public class BillingEventConsumer {
         String traceInfo = String.format("[P%d-0%d]", record.partition(), record.offset());
 
         try{
-            // Json 파싱
-            BillingMessageDto message = objectMapper.readValue(record.value(), BillingMessageDto.class);
+            // 1. 암호화된 payload 복호화
+            String encryptedPayload = record.value();
+            String decryptedPayload;
+            try {
+                decryptedPayload = AesUtil.decrypt(encryptedPayload, keyProvider.getCurrentKey());
+            } catch (Exception e) {
+                log.error("{} 🔓 복호화 실패: {}", traceInfo, e.getMessage());
+                // 복호화 실패 시 원본을 그대로 시도 (하위 호환성)
+                decryptedPayload = encryptedPayload;
+            }
+            
+            // 2. 복호화된 JSON 파싱
+            BillingMessageDto message = objectMapper.readValue(decryptedPayload, BillingMessageDto.class);
             String channel = message.getNotificationType() != null ? message.getNotificationType().toUpperCase() : "EMAIL";
 
             log.debug("{} 메시지 처리 시작: billId={}, userId={}, channel={}", 
@@ -137,7 +151,8 @@ public class BillingEventConsumer {
                     traceInfo, message.getUserId(), quietResult.reason, quietResult.source);
                 // 처리 중 마킹 (중복 방지)
                 duplicateCheckHandler.markAsProcessing(message.getBillId(), channel);
-                waitingQueueService.addToQueue(record.value());
+                // 대기열에는 복호화된 JSON 저장 (재발송 시 다시 암호화할 필요 없음)
+                waitingQueueService.addToQueue(decryptedPayload);
 
                 // PENDING 상태의 Notification 객체 생성/반환
                 return createOrUpdateNotificationEntity(

@@ -29,7 +29,7 @@ public class SystemHealthController {
 
     private final DataSource dataSource;
 
-    @Value("${app.notification.base-url:http://localhost:8082}")
+    @Value("${app.notification.base-url:http://localhost:8081}")
     private String notificationBaseUrl;
 
     @Value("${app.batch.base-url:http://localhost:8089}")

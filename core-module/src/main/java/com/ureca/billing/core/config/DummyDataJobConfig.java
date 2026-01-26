@@ -45,7 +45,7 @@ public class DummyDataJobConfig {
     @Bean
     @StepScope
     public ItemReader<Long> usersReader() {
-        return new SequenceItemReader(10_000);
+        return new SequenceItemReader(1000000);
     }
     //userAddons 더미데이터 개수
     @Bean

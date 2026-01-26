@@ -1,19 +1,31 @@
 package com.ureca.billing.notification.consumer;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.stereotype.Component;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ureca.billing.core.dto.BillingMessageDto;
 import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
 import com.ureca.billing.notification.domain.entity.Notification;
 import com.ureca.billing.notification.domain.repository.NotificationRepository;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-import java.util.Optional;
-
+/**
+ * Dead Letter Topic Consumer
+ * 
+ * 3회 재시도 실패한 EMAIL 메시지를 받아서 SMS로 자동 폴백 발송
+ * 
+ * 배치 모드 지원 (KafkaConsumerConfig와 일치)
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -23,15 +35,49 @@ public class DeadLetterConsumer {
     private final ObjectMapper objectMapper;
     private final DuplicateCheckHandler duplicateCheckHandler;
 
+    /**
+     * DLT 메시지 배치 처리
+     * - 배치로 들어온 메시지들을 순차 처리
+     * - 각 메시지마다 SMS 폴백 수행
+     */
     @KafkaListener(
-        topics = "billing-event.DLT",
+        topics = "billing-event-dlt",
         groupId = "dlq-group",
-        concurrency = "3"
+        concurrency = "3",
+        containerFactory = "kafkaListenerContainerFactory"
     )
-    public void listenDeadLetter(ConsumerRecord<String, String> record) {
-        String traceInfo = String.format("[DLT-P%d-O%d]", record.partition(), record.offset());
-        log.warn("{} 🚨 DLT 메시지 수신", traceInfo); //재시도 확인하기 쉽게하기 위해서 warn로 로그 지정
+    public void listenDeadLetter(List<ConsumerRecord<String, String>> records, Acknowledgment ack) {
+        log.warn("🚨 [DLT] {}개 메시지 수신", records.size());
+        
+        List<Notification> notificationsToSave = new ArrayList<>();
+        
+        for (ConsumerRecord<String, String> record : records) {
+            String traceInfo = String.format("[DLT-P%d-O%d]", record.partition(), record.offset());
+            
+            try {
+                processSingleDltMessage(record, traceInfo, notificationsToSave);
+            } catch (Exception e) {
+                log.error("{} ❌ DLT 메시지 처리 실패: {}", traceInfo, e.getMessage());
+            }
+        }
+        
+        // 일괄 저장
+        if (!notificationsToSave.isEmpty()) {
+            notificationRepository.saveAll(notificationsToSave);
+            log.info("🚨 [DLT] {}개 Notification 저장 완료", notificationsToSave.size());
+        }
+        
+        // 배치 커밋
+        ack.acknowledge();
+        log.info("🚨 [DLT] {}개 처리 완료", records.size());
+    }
 
+    /**
+     * 단건 DLT 메시지 처리
+     */
+    private void processSingleDltMessage(ConsumerRecord<String, String> record, 
+                                          String traceInfo, 
+                                          List<Notification> notificationsToSave) {
         try {
             String messageJson = record.value();
 
@@ -55,7 +101,10 @@ public class DeadLetterConsumer {
             updateEmailFailedRecord(message, traceInfo);
 
             // 2️⃣ SMS 자동 발송 (항상 성공 - 에러처리 X)
-            sendSmsFallback(message, traceInfo);
+            Notification smsNotification = sendSmsFallback(message, traceInfo);
+            if (smsNotification != null) {
+                notificationsToSave.add(smsNotification);
+            }
 
             log.info("{} ✅ DLT 처리 완료. EMAIL FAILED 업데이트 + SMS 발송 완료. billId={}", 
                     traceInfo, message.getBillId());
@@ -122,6 +171,7 @@ public class DeadLetterConsumer {
             .userId(message.getUserId())
             .notificationType("EMAIL")
             .notificationStatus("FAILED")
+            .billId(message.getBillId())
             .recipient(message.getRecipientEmail())
             .content(content)
             .retryCount(3)
@@ -137,11 +187,11 @@ public class DeadLetterConsumer {
      * - 실패 처리 안함 (요구사항: SMS는 실패처리하지 않아도 됨)
      * - 개발자 개입 X (완전 자동화)
      */
-    private void sendSmsFallback(BillingMessageDto message, String traceInfo) {
+    private Notification sendSmsFallback(BillingMessageDto message, String traceInfo) {
     	// 중복 체크 
     	if (duplicateCheckHandler.isDuplicate(message.getBillId(), "SMS")) {
             log.warn("{} ⚠️ SMS 이미 발송됨. 중복 스킵. billId={}", traceInfo, message.getBillId());
-            return;
+            return null;
         }
     	
         // SMS 발송 시뮬레이션 (Mocking - 항상 성공)
@@ -155,16 +205,14 @@ public class DeadLetterConsumer {
         // Redis에 SMS 발송 완료 마킹
         duplicateCheckHandler.markAsSent(message.getBillId(), "SMS");
 
-        // 3️⃣ SMS SENT 레코드 저장
-        saveSmsNotification(message);
-
-        log.info("{} ✅ SMS Fallback 발송 성공. billId={}", traceInfo, message.getBillId());
+        // 3️⃣ SMS SENT 레코드 생성 및 반환
+        return createSmsNotification(message);
     }
 
     /**
-     * SMS SENT 레코드 저장
+     * SMS SENT 레코드 생성
      */
-    private void saveSmsNotification(BillingMessageDto message) {
+    private Notification createSmsNotification(BillingMessageDto message) {
         String content = String.format(
             "[LG U+] %s 청구액 %,d원. 납부기한: %s (EMAIL 실패 → SMS 자동발송)",
             message.getBillYearMonth(),
@@ -172,7 +220,7 @@ public class DeadLetterConsumer {
             message.getDueDate() != null ? message.getDueDate() : "미정"
         );
 
-        Notification notification = Notification.builder()
+        return Notification.builder()
             .userId(message.getUserId())
             .notificationType("SMS")
             .notificationStatus("SENT")
@@ -185,9 +233,6 @@ public class DeadLetterConsumer {
             .errorMessage(null)
             .createdAt(LocalDateTime.now())
             .build();
-
-        notificationRepository.save(notification);
-        log.debug("💾 SMS SENT 레코드 저장 완료");
     }
 
     /**

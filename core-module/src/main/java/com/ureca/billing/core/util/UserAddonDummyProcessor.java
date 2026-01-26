@@ -92,29 +92,64 @@ public class UserAddonDummyProcessor implements ItemProcessor<Long, UserAddons>,
             return ua;
         }
 
-        // 2️⃣ 신규 생성
-        Long userId = randomUserId();
-        Set<Long> userAddonSet = assignedAddons.computeIfAbsent(userId, k -> new HashSet<>());
-
-        if (userAddonSet.size() >= addonIds.size()) return null; // 모든 addon 이미 있음
-
-        Long addonId;
-        do {
-            addonId = randomAddonId();
-        } while (userAddonSet.contains(addonId));
-        userAddonSet.add(addonId);
-
-        LocalDate startDate = randomDayInMonth();
-        AddonStatus status = AddonStatus.ACTIVE;
-        LocalDate endDate = null;
-
-        // 일정 비율로 캔슬 처리
-        if (ThreadLocalRandom.current().nextInt(100) < 20) { // 20% 캔슬
-            endDate = randomDayInMonth();
-            status = AddonStatus.CANCELLED;
+        // 2️⃣ 신규 생성 - addon이 부족한 user를 찾을 때까지 재시도
+        // 최대 재시도 횟수: user 수만큼 (모든 user를 한 번씩 시도)
+        int maxRetries = userIds.size();
+        
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
+            Long userId = randomUserId();
+            Set<Long> userAddonSet = assignedAddons.computeIfAbsent(userId, k -> new HashSet<>());
+            
+            // 이 user가 아직 addon이 부족하면 할당
+            if (userAddonSet.size() < addonIds.size()) {
+                Long addonId;
+                do {
+                    addonId = randomAddonId();
+                } while (userAddonSet.contains(addonId));
+                userAddonSet.add(addonId);
+                
+                LocalDate startDate = randomDayInMonth();
+                AddonStatus status = AddonStatus.ACTIVE;
+                LocalDate endDate = null;
+                
+                // 일정 비율로 캔슬 처리
+                if (ThreadLocalRandom.current().nextInt(100) < 20) { // 20% 캔슬
+                    endDate = randomDayInMonth();
+                    status = AddonStatus.CANCELLED;
+                }
+                
+                return new UserAddons(userId, addonId, startDate, endDate, status);
+            }
         }
-
-        return new UserAddons(userId, addonId, startDate, endDate, status);
+        
+        // 모든 user가 addon을 모두 가지고 있는 경우 (이론적으로 거의 불가능)
+        // 하지만 안전을 위해 마지막 시도: 순차적으로 addon이 부족한 user 찾기
+        for (Long userId : userIds) {
+            Set<Long> userAddonSet = assignedAddons.computeIfAbsent(userId, k -> new HashSet<>());
+            if (userAddonSet.size() < addonIds.size()) {
+                Long addonId;
+                do {
+                    addonId = randomAddonId();
+                } while (userAddonSet.contains(addonId));
+                userAddonSet.add(addonId);
+                
+                LocalDate startDate = randomDayInMonth();
+                AddonStatus status = AddonStatus.ACTIVE;
+                LocalDate endDate = null;
+                
+                if (ThreadLocalRandom.current().nextInt(100) < 20) {
+                    endDate = randomDayInMonth();
+                    status = AddonStatus.CANCELLED;
+                }
+                
+                return new UserAddons(userId, addonId, startDate, endDate, status);
+            }
+        }
+        
+        // 정말 모든 user가 모든 addon을 가지고 있는 경우 (거의 불가능)
+        // 이 경우 null을 반환하지만, 실제로는 발생하지 않을 것
+        // 100만 user × 8 addon = 800만 조합 가능하므로 200만 건은 충분히 생성 가능
+        return null;
     }
 
     private Long randomUserId() {

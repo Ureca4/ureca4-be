@@ -6,7 +6,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @EnableScheduling
 @SpringBootApplication(scanBasePackages = {
-    "com.ureca.billing.batch"
+    "com.ureca.billing.batch", "com.ureca.billing.core.security"
 })
 public class BatchModuleApplication {
 

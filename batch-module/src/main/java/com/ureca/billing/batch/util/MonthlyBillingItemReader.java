@@ -78,5 +78,39 @@ public class MonthlyBillingItemReader {
 
         return reader;
     }
+
+    @Bean
+    @StepScope
+    public ItemReader<Long> billItemReader(
+            @Value("#{jobParameters['billingMonth']}") String billingMonth
+    ) {
+        JdbcPagingItemReader<Long> reader = new JdbcPagingItemReader<>();
+        reader.setDataSource(dataSource);
+        reader.setPageSize(1000);
+
+        // 결과 매핑 (bill_id만 추출)
+        reader.setRowMapper((rs, rowNum) -> rs.getLong("bill_id"));
+
+        MySqlPagingQueryProvider qp = new MySqlPagingQueryProvider();
+
+        // [핵심 변경 사항]
+        // 1. SELECT: 청구서 ID 선택
+        qp.setSelectClause("b.bill_id");
+
+        // 2. FROM: 청구서(BILLS)를 기준으로 아웃박스(OUTBOX_EVENTS)를 LEFT JOIN
+        //    -> 이렇게 하면 매칭되는 아웃박스가 없으면 o.event_id가 NULL이 됩니다.
+        qp.setFromClause("FROM BILLS b LEFT JOIN OUTBOX_EVENTS o ON b.bill_id = o.bill_id");
+
+        // 3. WHERE: '이번 달 청구서' 중에서 AND '아웃박스에 기록이 없는(IS NULL)' 것만 골라라
+        qp.setWhereClause("WHERE b.billing_month = :billingMonth AND o.event_id IS NULL");
+
+        // 4. 정렬: 페이징 Reader의 필수 조건
+        qp.setSortKeys(Map.of("b.bill_id", Order.ASCENDING));
+
+        reader.setQueryProvider(qp);
+        reader.setParameterValues(Map.of("billingMonth", billingMonth));
+
+        return reader;
+    }
 }
 

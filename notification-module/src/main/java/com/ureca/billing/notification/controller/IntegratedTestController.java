@@ -1,5 +1,20 @@
 package com.ureca.billing.notification.controller;
 
+import java.time.LocalTime;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ureca.billing.core.dto.BillingMessageDto;
 import com.ureca.billing.notification.consumer.handler.DuplicateCheckHandler;
 import com.ureca.billing.notification.domain.dto.QuietTimeCheckResult;
@@ -13,14 +28,6 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.ResponseEntity;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.web.bind.annotation.*;
-
-import java.time.LocalTime;
-import java.util.HashMap;
-import java.util.Map;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 통합 테스트 Controller
@@ -400,7 +407,7 @@ public class IntegratedTestController {
             String messageJson = objectMapper.writeValueAsString(message);
             
             // DLT 토픽으로 직접 전송 (BillingMessageDto 타입)
-            kafkaTemplate.send("billing-event.DLT", billId.toString(), messageJson);
+            kafkaTemplate.send("billing-event-dlt", billId.toString(), messageJson);
             
             response.put("result", "SUCCESS");
             response.put("message", "✅ DLT 테스트 메시지 전송 완료!");

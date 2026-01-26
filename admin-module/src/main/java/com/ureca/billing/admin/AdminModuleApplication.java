@@ -5,7 +5,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 
 @SpringBootApplication(scanBasePackages = {
-    "com.ureca.billing.core",
     "com.ureca.billing.admin"
 })
 public class AdminModuleApplication {

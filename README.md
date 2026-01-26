@@ -329,4 +329,4 @@ curl http://localhost:8080/api/actuator/health
 ## 📚 참고 문서
 
 - [Flyway 마이그레이션 가이드](./FLYWAY_README.md)
-- [프론트엔드 README](./frontend/README.md)
+- [프론트엔드 README](https://github.com/Ureca4/ureca4-fe/blob/main/README.md)

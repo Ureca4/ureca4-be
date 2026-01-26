@@ -28,6 +28,14 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 커넥션 풀 크기 증가 (Kafka 대량 메시지 처리 대응)
+      maximum-pool-size: 50  # 기본값 10 → 50으로 증가
+      minimum-idle: 10       # 최소 유휴 연결 수
+      connection-timeout: 60000  # 커넥션 획득 타임아웃 60초 (기본 30초)
+      idle-timeout: 600000    # 유휴 연결 유지 시간 10분
+      max-lifetime: 1800000   # 연결 최대 수명 30분
+      leak-detection-threshold: 60000  # 연결 누수 감지 (60초 이상 사용 시 경고)
 
   data:
     redis:

@@ -33,7 +33,7 @@ public class MonthlyBillingJobConfig {
     		@Qualifier("billingUserReader") ItemReader<Long> monthItemReader
     ){
         return new StepBuilder("monthlyBillingStep", jobRepository)
-                .<Long, Long>chunk(1000, transactionManager)
+                .<Long, Long>chunk(10000, transactionManager)
                 .reader(monthItemReader)
                 .writer(monthlyBillingWriter)
                 .build();
@@ -44,7 +44,7 @@ public class MonthlyBillingJobConfig {
             @Qualifier("billItemReader") ItemReader<Long> billItemReader
     ) {
         return new StepBuilder("monthlyOutboxStep", jobRepository)
-                .<Long, Long>chunk(1000, transactionManager)
+                .<Long, Long>chunk(10000, transactionManager)
                 .reader(billItemReader)
                 .writer(monthlyOutboxWriter) // ✅ 새 Writer 사용 (createOutboxEvents 호출)
                 .build();

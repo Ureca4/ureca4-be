@@ -128,18 +128,3 @@ docker logs -f lgubill-batch
 3. 확인하려는 토픽(예: `billing-topic`) 클릭
 4. **Messages** 탭 클릭 -> 우측 `Execute` 버튼 클릭하여 최신 메시지 조회
 
----
-## 8. 🧪 간편 테스트 순서 (Quick Start)
-복잡한 설명 없이 **바로 테스트해보고 싶다면** 아래 순서대로 실행하세요.
-
-0. **기존 DB 볼륨 삭제**: `docker volume rm ureca4-be_mysql_data`
-1. **전체 시스템 실행**:
-   `docker compose -f docker-compose.infra.yml -f docker-compose.app.yml --env-file .env.docker up -d`
-2. **유저 더미 데이터 생성** (1회 필수):
-   `... run --rm batch ... --spring.batch.job.name=userDummyDataJob`
-3. **이번 달 청구 데이터 생성** (예: 2025-08):
-   `... run --rm batch ... --spring.batch.job.name=monthlyDummyDataJob targetYearMonth=2025-08`
-4. **정산 배치 실행**:
-   `... run --rm batch ... --spring.batch.job.name=monthlyBillingJob billingMonth=2025-08`
-5. **결과 확인**:
-   [Kafka UI](http://localhost:28080) 접속 -> `billing-topic` 메시지 확인

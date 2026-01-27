@@ -86,8 +86,8 @@ crypto:
 # 실제 이메일 발송 활성화 여부
 notification:
   email:
-    enabled: false  # false로 하면 mocking만
-    test-recipient: 4billforu@gmail.com  # 테스트용 수신자
+    enabled: false # false로 하면 mocking만
+    test-recipient: jibhaenggug@gmail.com  # 테스트용 수신자
     
    # 실패율 설정 (DLT 테스트용)
     initial-failure-rate: 1           # 첫 시도 실패율 (기본 1%)

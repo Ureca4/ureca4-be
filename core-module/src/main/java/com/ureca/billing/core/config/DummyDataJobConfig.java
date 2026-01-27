@@ -46,19 +46,19 @@ public class DummyDataJobConfig {
     @Bean
     @StepScope
     public ItemReader<Long> usersReader() {
-        return new SequenceItemReader(10000);
+        return new SequenceItemReader(1000000);
     }
     //userAddons 더미데이터 개수
     @Bean
     @StepScope
     public ItemReader<Long> userAddonsReader() {
-        return new SequenceItemReader(20000);
+        return new SequenceItemReader(2000000);
     }
     //microPayments 더미데이터 개수
     @Bean
     @StepScope
     public ItemReader<Long> microPaymentsUserReader() {
-        return new SequenceItemReader(20000);
+        return new SequenceItemReader(2000000);
     }
 
     //범용 Step 생성 메서드

@@ -310,9 +310,9 @@ curl http://localhost:8080/api/actuator/health
 
 ---
 
-## 🧑‍💻 팀원
+## 🧑‍💻 팀원 
 
-| <img src="https://avatars.githubusercontent.com/coding-quokka101" width="80"><br><a href="https://github.com/coding-quokka101">👑 윤재영</a> | <img src="https://avatars.githubusercontent.com/hwantae" width="80"><br><a href="https://github.com/hwantae">권태환</a> | <img src="https://avatars.githubusercontent.com/shin-0328" width="80"><br><a href="https://github.com/shin-0328">신우철</a> | <img src="https://avatars.githubusercontent.com/jae-0" width="80"><br><a href="https://github.com/jae-0">박성준</a> | <img src="https://avatars.githubusercontent.com/SJP03" width="80"><br><a href="https://github.com/SJP03">이윤경</a> |
+| <img src="https://avatars.githubusercontent.com/jae-0" width="80"><br><a href="https://github.com/jae-0">👑 윤재영</a> | <img src="https://avatars.githubusercontent.com/hwantae" width="80"><br><a href="https://github.com/hwantae">권태환</a> | <img src="https://avatars.githubusercontent.com/shin-0328" width="80"><br><a href="https://github.com/shin-0328">신우철</a> | <img src="https://avatars.githubusercontent.com/SJP03" width="80"><br><a href="https://github.com/SJP03">박성준</a> | <img src="https://avatars.githubusercontent.com/coding-quokka101" width="80"><br><a href="https://github.com/coding-quokka101">이윤경</a> |
 |:---:|:---:|:---:|:---:|:---:|
 | <ul><li>보안</li><li>운영</li></ul> | <ul><li>이벤트 기반<br>메시지 플랫폼</li><li>보안</li></ul> | <ul><li>요금 정산 배치</li><li>운영</li></ul> | <ul><li>메일 발송 제어</li><li>운영</li></ul> | <ul><li>이벤트 기반<br>메시지 플랫폼</li><li>메일 발송 제어</li></ul> |
 
